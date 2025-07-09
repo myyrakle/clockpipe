@@ -2,5 +2,15 @@
 name = "clockpipe"
 version = "0.1.0"
 edition = "2024"
+license = "MIT" 
+authors = ["myyrakle <sssang97@naver.com>"] 
+description = "ready" 
+keywords = [] 
+include = ["src/*", "Cargo.toml"]
+exclude = []
+readme = "README.md" 
+repository = "https://github.com/myyrakle/clockpipe"
+documentation = "https://github.com/myyrakle/clockpipe/blob/master/README.md"
+homepage = "https://github.com/myyrakle/clockpipe/blob/master/README.md"
 
 [dependencies]
