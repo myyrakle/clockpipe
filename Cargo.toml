@@ -14,3 +14,4 @@ documentation = "https://github.com/myyrakle/clockpipe/blob/master/README.md"
 homepage = "https://github.com/myyrakle/clockpipe/blob/master/README.md"
 
 [dependencies]
+tokio = { version="1.46.1", features=["full"] }
