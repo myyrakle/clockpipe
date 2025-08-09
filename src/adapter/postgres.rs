@@ -51,3 +51,28 @@ impl PostgresConnection {
         }
     }
 }
+
+impl PostgresConnection {
+    pub async fn get_table_name_by_relation_id(&self, relation_id: i64) -> errors::Result<String> {
+        let result: Vec<(String,)> =
+            sqlx::query_as("SELECT relname FROM pg_catalog.pg_class WHERE oid = $1")
+                .bind(relation_id)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| {
+                    errors::Errors::TableNotFoundError(format!(
+                        "Failed to get table name by relation ID: {}",
+                        e
+                    ))
+                })?;
+
+        if result.is_empty() {
+            return Err(errors::Errors::TableNotFoundError(format!(
+                "No table found for relation ID: {}",
+                relation_id
+            )));
+        }
+
+        Ok(result[0].0.clone())
+    }
+}
