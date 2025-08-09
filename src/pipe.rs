@@ -10,6 +10,11 @@ pub async fn run_postgres_pipe(config_options: &command::run::ConfigOptions) {
     })
     .await;
 
+    if let Err(error) = postgres_pipe.exporter.ping().await {
+        eprintln!("Failed to ping Postgres exporter: {:?}", error);
+        return;
+    }
+
     tokio::select! {
         _ = postgres_pipe.run_pipe() => {
             println!("Postgres exporter running.");
