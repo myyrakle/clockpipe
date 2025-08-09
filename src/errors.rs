@@ -6,6 +6,7 @@ pub enum Errors {
     DatabasePingError(String),
     TableNotFoundError(String),
     GetTableNameFailed(String),
+    PublicationCreateFailed(String),
 }
 
 pub type Result<T> = std::result::Result<T, Errors>;
@@ -25,6 +26,9 @@ impl std::fmt::Display for Errors {
             Errors::DatabasePingError(msg) => write!(f, "Database ping error: {}", msg),
             Errors::TableNotFoundError(msg) => write!(f, "Table not found: {}", msg),
             Errors::GetTableNameFailed(msg) => write!(f, "Failed to get table name: {}", msg),
+            Errors::PublicationCreateFailed(msg) => {
+                write!(f, "Failed to create publication: {}", msg)
+            }
         }
     }
 }

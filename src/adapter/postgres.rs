@@ -117,3 +117,23 @@ impl PostgresConnection {
         Ok(result)
     }
 }
+
+impl PostgresConnection {
+    pub async fn create_publication(
+        &self,
+        publication_name: &str,
+        table_names: &[String],
+    ) -> errors::Result<()> {
+        let query = format!(
+            "CREATE PUBLICATION IF NOT EXISTS {} FOR ONLY TABLES {}",
+            publication_name,
+            table_names.join(", ")
+        );
+
+        sqlx::query(&query).execute(&self.pool).await.map_err(|e| {
+            errors::Errors::PublicationCreateFailed(format!("Failed to create publication: {}", e))
+        })?;
+
+        Ok(())
+    }
+}
