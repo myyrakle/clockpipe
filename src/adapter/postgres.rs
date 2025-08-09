@@ -67,6 +67,13 @@ pub struct ReplicationSlot {
     pub wal_status: String,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct PeekWalChangeResult {
+    pub lsn: String,
+    pub xid: String,
+    pub data: Vec<u8>,
+}
+
 impl PostgresConnection {
     pub async fn get_table_name_by_relation_id(&self, relation_id: i64) -> errors::Result<String> {
         let result: Vec<(String,)> =
@@ -201,5 +208,29 @@ impl PostgresConnection {
         }
 
         Ok(rows[0].clone())
+    }
+
+    pub async fn peek_wal_changes(
+        &self,
+        publication_name: &str,
+        replication_slot_name: &str,
+        limit: i64, // recommendation: 65536
+    ) -> errors::Result<Vec<PeekWalChangeResult>> {
+        let rows: Vec<PeekWalChangeResult> = sqlx::query_as(
+            r#"
+                SELECT lsn, xid, data 
+		        FROM pg_logical_slot_peek_binary_changes($1, NULL, $2, 'proto_version', '1', 'publication_names', $3)
+            "#,
+        )
+        .bind(publication_name)
+        .bind(replication_slot_name)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| {
+            errors::Errors::PeekWalChangesFailed(format!("Failed to peek WAL changes: {}", e))
+        })?;
+
+        Ok(rows)
     }
 }
