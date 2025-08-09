@@ -136,4 +136,25 @@ impl PostgresConnection {
 
         Ok(())
     }
+
+    pub async fn add_table_to_publication(
+        &self,
+        publication_name: &str,
+        table_names: &[String],
+    ) -> errors::Result<()> {
+        let query = format!(
+            "ALTER PUBLICATION {} ADD TABLE {}",
+            publication_name,
+            table_names.join(", ")
+        );
+
+        sqlx::query(&query).execute(&self.pool).await.map_err(|e| {
+            errors::Errors::PublicationAddFailed(format!(
+                "Failed to add table to publication: {}",
+                e
+            ))
+        })?;
+
+        Ok(())
+    }
 }

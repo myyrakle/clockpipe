@@ -7,6 +7,7 @@ pub enum Errors {
     TableNotFoundError(String),
     GetTableNameFailed(String),
     PublicationCreateFailed(String),
+    PublicationAddFailed(String),
 }
 
 pub type Result<T> = std::result::Result<T, Errors>;
@@ -28,6 +29,9 @@ impl std::fmt::Display for Errors {
             Errors::GetTableNameFailed(msg) => write!(f, "Failed to get table name: {}", msg),
             Errors::PublicationCreateFailed(msg) => {
                 write!(f, "Failed to create publication: {}", msg)
+            }
+            Errors::PublicationAddFailed(msg) => {
+                write!(f, "Failed to add table to publication: {}", msg)
             }
         }
     }
