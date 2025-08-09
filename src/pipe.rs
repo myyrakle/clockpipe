@@ -1,7 +1,14 @@
-use crate::{interface::IExporter, postgres};
+use crate::{command, interface::IExporter, postgres};
 
-pub async fn run_postgres_pipe() {
-    let postgres_pipe = new_pipe(postgres::PostgresExporter {}).await;
+pub async fn run_postgres_pipe(config_options: &command::run::ConfigOptions) {
+    let config = config_options
+        .read_config_from_file()
+        .expect("Failed to read configuration");
+
+    let postgres_pipe = new_pipe(postgres::PostgresExporter {
+        config: config.postgres.clone(),
+    })
+    .await;
 
     tokio::select! {
         _ = postgres_pipe.run_pipe() => {

@@ -1,6 +1,7 @@
 pub mod pipe;
 use clap::Parser;
 mod command;
+pub mod config;
 pub mod errors;
 pub mod interface;
 pub mod postgres;
@@ -11,8 +12,9 @@ async fn main() {
 
     match args.action {
         command::SubCommand::Run(command) => {
-            println!("{}", command.value.config_file);
-            pipe::run_postgres_pipe().await;
+            println!("config-file: {}", command.value.config_file);
+
+            pipe::run_postgres_pipe(&command.value).await;
         }
     }
 }

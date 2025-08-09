@@ -1,10 +1,5 @@
 use crate::errors::Errors;
 
-#[derive(Debug, Clone)]
-pub enum SourceType {
-    Postgres,
-}
-
 #[async_trait::async_trait]
 pub trait IExporter {
     async fn peek(&self) -> Result<PeekResult, Errors>;

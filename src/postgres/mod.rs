@@ -4,7 +4,9 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub struct PostgresExporter {}
+pub struct PostgresExporter {
+    pub config: Option<crate::config::PostgresConfig>,
+}
 
 #[async_trait::async_trait]
 impl IExporter for PostgresExporter {
