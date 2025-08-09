@@ -1,5 +1,6 @@
 pub mod pipe;
 use clap::Parser;
+pub mod adapter;
 mod command;
 pub mod config;
 pub mod errors;

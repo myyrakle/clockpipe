@@ -26,12 +26,12 @@ pub enum SourceType {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PostgresConfig {
-    pub connection: PostgresConnection,
+    pub connection: PostgresConnectionConfig,
     pub tables: Vec<PostgresSource>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct PostgresConnection {
+pub struct PostgresConnectionConfig {
     pub host: String,
     pub port: u16,
     pub username: String,
@@ -53,11 +53,11 @@ pub enum TargetType {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ClickHouseConfig {
-    pub connection: ClickHouseConnection,
+    pub connection: ClickHouseConnectionConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ClickHouseConnection {
+pub struct ClickHouseConnectionConfig {
     pub host: String,
     pub port: u16,
     pub username: String,

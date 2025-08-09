@@ -2,6 +2,8 @@
 pub enum Errors {
     ConfigReadError(String),
     IOError(std::io::Error),
+    DatabaseConnectionError(String),
+    DatabasePingError(String),
 }
 
 pub type Result<T> = std::result::Result<T, Errors>;
