@@ -1,66 +1,18 @@
-use crate::interface::IExporter;
-
+pub mod pipe;
+use clap::Parser;
+mod command;
 pub mod errors;
 pub mod interface;
 pub mod postgres;
 
 #[tokio::main]
 async fn main() {
-    let postgres_pipe = new_pipe(postgres::PostgresExporter {}).await;
+    let args = command::Command::parse();
 
-    tokio::select! {
-        _ = postgres_pipe.run_pipe() => {
-            println!("Postgres exporter running.");
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct Pipe<T: IExporter> {
-    pub exporter: T,
-}
-
-pub async fn new_pipe<T: IExporter>(exporter: T) -> Pipe<T> {
-    Pipe { exporter }
-}
-
-impl<T: IExporter> Pipe<T> {
-    async fn run_pipe(&self) {
-        self.initialize().await;
-        self.sync().await;
-    }
-
-    async fn initialize(&self) {
-        println!("Initializing Postgres exporter...");
-
-        // create publication if not exists
-
-        // create replication if not exists
-
-        // create table if not exists & copy data from the table
-    }
-
-    async fn sync(&self) {
-        loop {
-            // Peek new rows
-            let peek_result = self.exporter.peek().await;
-
-            let peek_result = match peek_result {
-                Ok(peek) => peek,
-                Err(e) => {
-                    eprintln!("Error peeking: {:?}", e);
-                    continue;
-                }
-            };
-
-            // Handle peek result
-            // ...
-
-            // Advance the exporter
-            if let Err(e) = self.exporter.advance(&peek_result.advance_key).await {
-                eprintln!("Error advancing exporter: {:?}", e);
-                continue;
-            }
+    match args.action {
+        command::SubCommand::Run(command) => {
+            println!("{}", command.value.config_file);
+            pipe::run_postgres_pipe().await;
         }
     }
 }
