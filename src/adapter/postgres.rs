@@ -52,6 +52,15 @@ impl PostgresConnection {
     }
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct PostgreColumn {
+    pub name: String,
+    pub data_type: String,
+    pub not_null: bool,
+    pub position: i32,
+    pub has_default: bool,
+}
+
 impl PostgresConnection {
     pub async fn get_table_name_by_relation_id(&self, relation_id: i64) -> errors::Result<String> {
         let result: Vec<(String,)> =
@@ -74,5 +83,37 @@ impl PostgresConnection {
         }
 
         Ok(result[0].0.clone())
+    }
+
+    pub async fn get_columns_by_relation_id(
+        &self,
+        relation_id: i64,
+    ) -> errors::Result<Vec<PostgreColumn>> {
+        let result: Vec<PostgreColumn> = sqlx::query_as(
+            r#"
+                SELECT 
+                    a.attname AS column_name,
+                    pg_catalog.format_type(a.atttypid, a.atttypmod) AS data_type,
+                    a.attnotnull AS not_null,
+                    a.attnum AS position,
+                    a.atthasdef AS has_default
+                FROM pg_catalog.pg_attribute a
+                WHERE a.attrelid = $1
+                AND a.attnum > 0
+                AND NOT a.attisdropped
+                ORDER BY a.attnum
+            "#,
+        )
+        .bind(relation_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| {
+            errors::Errors::GetTableNameFailed(format!(
+                "Failed to get columns for relation ID: {}",
+                e
+            ))
+        })?;
+
+        Ok(result)
     }
 }
