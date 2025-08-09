@@ -61,6 +61,12 @@ pub struct PostgreColumn {
     pub has_default: bool,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ReplicationSlot {
+    pub slot_name: String,
+    pub wal_status: String,
+}
+
 impl PostgresConnection {
     pub async fn get_table_name_by_relation_id(&self, relation_id: i64) -> errors::Result<String> {
         let result: Vec<(String,)> =
@@ -171,5 +177,29 @@ impl PostgresConnection {
             })?;
 
         Ok(())
+    }
+
+    pub async fn get_replication_slot(&self, slot_name: &str) -> errors::Result<ReplicationSlot> {
+        let rows: Vec<ReplicationSlot> = sqlx::query_as(
+            "select slot_name, wal_status from pg_replication_slots where slot_name = $1;",
+        )
+        .bind(slot_name)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| {
+            errors::Errors::ReplicationCreateFailed(format!(
+                "Failed to create replication slot: {}",
+                e
+            ))
+        })?;
+
+        if rows.is_empty() {
+            return Err(errors::Errors::ReplicationNotFound(format!(
+                "No replication slot found with name: {}",
+                slot_name
+            )));
+        }
+
+        Ok(rows[0].clone())
     }
 }

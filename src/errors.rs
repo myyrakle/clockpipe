@@ -9,6 +9,7 @@ pub enum Errors {
     PublicationCreateFailed(String),
     PublicationAddFailed(String),
     ReplicationCreateFailed(String),
+    ReplicationNotFound(String),
 }
 
 pub type Result<T> = std::result::Result<T, Errors>;
@@ -37,6 +38,7 @@ impl std::fmt::Display for Errors {
             Errors::ReplicationCreateFailed(msg) => {
                 write!(f, "Failed to create replication slot: {}", msg)
             }
+            Errors::ReplicationNotFound(msg) => write!(f, "Replication slot not found: {}", msg),
         }
     }
 }
