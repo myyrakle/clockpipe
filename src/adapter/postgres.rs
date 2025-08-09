@@ -233,4 +233,24 @@ impl PostgresConnection {
 
         Ok(rows)
     }
+
+    pub async fn advance_replication_slot(
+        &self,
+        replication_slot_name: &str,
+        lsn: &str,
+    ) -> errors::Result<()> {
+        sqlx::query("SELECT pg_logical_slot_advance($1, $2);")
+            .bind(replication_slot_name)
+            .bind(lsn)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                errors::Errors::ReplicationSlotAdvanceFailed(format!(
+                    "Failed to advance replication slot: {}",
+                    e
+                ))
+            })?;
+
+        Ok(())
+    }
 }
