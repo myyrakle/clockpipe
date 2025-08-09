@@ -19,7 +19,7 @@ impl ClickhouseConnection {
     pub async fn ping(&self) -> errors::Result<()> {
         self.client
             .query("SELECT 1")
-            .fetch_one::<i64>()
+            .fetch_one::<u8>()
             .await
             .map_err(|e| {
                 crate::errors::Errors::DatabasePingError(format!(

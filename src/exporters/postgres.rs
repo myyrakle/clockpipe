@@ -47,6 +47,8 @@ impl IExporter for PostgresExporter {
             .await
             .map_err(|e| Errors::DatabasePingError(format!("ClickHouse ping failed: {}", e)))?;
 
+        println!("Postgres and ClickHouse connections are healthy.");
+
         Ok(())
     }
 

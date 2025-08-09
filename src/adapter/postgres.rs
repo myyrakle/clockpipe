@@ -1,3 +1,5 @@
+use sqlx::postgres::PgConnectOptions;
+
 use crate::{config::PostgresConnectionConfig, errors};
 
 #[derive(Debug, Clone)]
@@ -7,14 +9,19 @@ pub struct PostgresConnection {
 
 impl PostgresConnection {
     pub async fn new(config: &PostgresConnectionConfig) -> errors::Result<Self> {
-        let connection_string = format!(
-            "host={} port={} user={} password={}",
-            config.host, config.port, config.username, config.password
-        );
+        let mut options = PgConnectOptions::new()
+            .host(&config.host)
+            .port(config.port as u16)
+            .username(&config.username)
+            .database(&config.database);
+
+        if !config.password.is_empty() {
+            options = options.password(&config.password);
+        }
 
         let result = sqlx::postgres::PgPoolOptions::new()
             .max_connections(5)
-            .connect(&connection_string)
+            .connect_with(options)
             .await;
 
         match result {
