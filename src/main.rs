@@ -1,9 +1,11 @@
 pub mod pipe;
 use clap::Parser;
+pub mod adapter;
 mod command;
+pub mod config;
 pub mod errors;
+pub mod exporters;
 pub mod interface;
-pub mod postgres;
 
 #[tokio::main]
 async fn main() {
@@ -11,8 +13,9 @@ async fn main() {
 
     match args.action {
         command::SubCommand::Run(command) => {
-            println!("{}", command.value.config_file);
-            pipe::run_postgres_pipe().await;
+            println!("config-file: {}", command.value.config_file);
+
+            pipe::run_postgres_pipe(&command.value).await;
         }
     }
 }

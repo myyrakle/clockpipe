@@ -1,7 +1,30 @@
-use crate::{interface::IExporter, postgres};
+use crate::{command, exporters, interface::IExporter};
 
-pub async fn run_postgres_pipe() {
-    let postgres_pipe = new_pipe(postgres::PostgresExporter {}).await;
+pub async fn run_postgres_pipe(config_options: &command::run::ConfigOptions) {
+    let config = config_options
+        .read_config_from_file()
+        .expect("Failed to read configuration");
+
+    let exporter = exporters::PostgresExporter::new(
+        config
+            .source
+            .postgres
+            .clone()
+            .expect("Postgres config is required"),
+        config
+            .target
+            .clickhouse
+            .clone()
+            .expect("Clickhouse config is required"),
+    )
+    .await;
+
+    let postgres_pipe = new_pipe(exporter).await;
+
+    if let Err(error) = postgres_pipe.exporter.ping().await {
+        eprintln!("Failed to ping Postgres exporter: {:?}", error);
+        return;
+    }
 
     tokio::select! {
         _ = postgres_pipe.run_pipe() => {
