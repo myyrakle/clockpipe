@@ -3,8 +3,8 @@ use clap::Parser;
 mod command;
 pub mod config;
 pub mod errors;
+pub mod exporters;
 pub mod interface;
-pub mod postgres;
 
 #[tokio::main]
 async fn main() {

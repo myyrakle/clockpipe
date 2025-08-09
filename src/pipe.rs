@@ -1,11 +1,11 @@
-use crate::{command, interface::IExporter, postgres};
+use crate::{command, exporters, interface::IExporter};
 
 pub async fn run_postgres_pipe(config_options: &command::run::ConfigOptions) {
     let config = config_options
         .read_config_from_file()
         .expect("Failed to read configuration");
 
-    let postgres_pipe = new_pipe(postgres::PostgresExporter {
+    let postgres_pipe = new_pipe(exporters::PostgresExporter {
         postgres_config: config.source.postgres.clone(),
         clickhouse_config: config.target.clickhouse.clone(),
     })
