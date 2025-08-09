@@ -13,3 +13,14 @@ impl From<std::io::Error> for Errors {
         Errors::IOError(err)
     }
 }
+
+impl std::fmt::Display for Errors {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Errors::ConfigReadError(msg) => write!(f, "Configuration read error: {}", msg),
+            Errors::IOError(err) => write!(f, "I/O error: {}", err),
+            Errors::DatabaseConnectionError(msg) => write!(f, "Database connection error: {}", msg),
+            Errors::DatabasePingError(msg) => write!(f, "Database ping error: {}", msg),
+        }
+    }
+}

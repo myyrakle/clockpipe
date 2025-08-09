@@ -5,11 +5,21 @@ pub async fn run_postgres_pipe(config_options: &command::run::ConfigOptions) {
         .read_config_from_file()
         .expect("Failed to read configuration");
 
-    let postgres_pipe = new_pipe(exporters::PostgresExporter {
-        postgres_config: config.source.postgres.clone(),
-        clickhouse_config: config.target.clickhouse.clone(),
-    })
+    let exporter = exporters::PostgresExporter::new(
+        config
+            .source
+            .postgres
+            .clone()
+            .expect("Postgres config is required"),
+        config
+            .target
+            .clickhouse
+            .clone()
+            .expect("Clickhouse config is required"),
+    )
     .await;
+
+    let postgres_pipe = new_pipe(exporter).await;
 
     if let Err(error) = postgres_pipe.exporter.ping().await {
         eprintln!("Failed to ping Postgres exporter: {:?}", error);

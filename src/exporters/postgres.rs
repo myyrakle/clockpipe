@@ -1,18 +1,52 @@
 use crate::{
+    adapter,
     errors::Errors,
     interface::{IExporter, PeekResult},
 };
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PostgresExporter {
-    pub postgres_config: Option<crate::config::PostgresConfig>,
-    pub clickhouse_config: Option<crate::config::ClickHouseConfig>,
+    pub postgres_config: crate::config::PostgresConfig,
+    pub clickhouse_config: crate::config::ClickHouseConfig,
+    postgres_connection: adapter::postgres::PostgresConnection,
+    clickhouse_connection: adapter::clickhouse::ClickhouseConnection,
+}
+
+impl PostgresExporter {
+    pub async fn new(
+        postgres_config: crate::config::PostgresConfig,
+        clickhouse_config: crate::config::ClickHouseConfig,
+    ) -> Self {
+        let postgres_connection =
+            adapter::postgres::PostgresConnection::new(&postgres_config.connection)
+                .await
+                .expect("Failed to create Postgres connection");
+
+        let clickhouse_connection =
+            adapter::clickhouse::ClickhouseConnection::new(&clickhouse_config.connection);
+
+        PostgresExporter {
+            postgres_config,
+            clickhouse_config,
+            postgres_connection,
+            clickhouse_connection,
+        }
+    }
 }
 
 #[async_trait::async_trait]
 impl IExporter for PostgresExporter {
     async fn ping(&self) -> Result<(), Errors> {
-        // Implement ping logic for Postgres
+        self.postgres_connection
+            .ping()
+            .await
+            .map_err(|e| Errors::DatabasePingError(format!("Postgres ping failed: {}", e)))?;
+
+        self.clickhouse_connection
+            .ping()
+            .await
+            .map_err(|e| Errors::DatabasePingError(format!("ClickHouse ping failed: {}", e)))?;
+
         Ok(())
     }
 

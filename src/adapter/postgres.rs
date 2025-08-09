@@ -1,12 +1,12 @@
 use crate::{config::PostgresConnectionConfig, errors};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PostgresConnection {
     pool: sqlx::Pool<sqlx::Postgres>,
 }
 
 impl PostgresConnection {
-    pub async fn new(config: PostgresConnectionConfig) -> errors::Result<Self> {
+    pub async fn new(config: &PostgresConnectionConfig) -> errors::Result<Self> {
         let connection_string = format!(
             "host={} port={} user={} password={}",
             config.host, config.port, config.username, config.password
