@@ -6,7 +6,8 @@ pub async fn run_postgres_pipe(config_options: &command::run::ConfigOptions) {
         .expect("Failed to read configuration");
 
     let postgres_pipe = new_pipe(postgres::PostgresExporter {
-        config: config.postgres.clone(),
+        postgres_config: config.source.postgres.clone(),
+        clickhouse_config: config.target.clickhouse.clone(),
     })
     .await;
 

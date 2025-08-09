@@ -5,7 +5,8 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct PostgresExporter {
-    pub config: Option<crate::config::PostgresConfig>,
+    pub postgres_config: Option<crate::config::PostgresConfig>,
+    pub clickhouse_config: Option<crate::config::ClickHouseConfig>,
 }
 
 #[async_trait::async_trait]
