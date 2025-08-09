@@ -157,4 +157,19 @@ impl PostgresConnection {
 
         Ok(())
     }
+
+    pub async fn create_replication_slot(&self, slot_name: &str) -> errors::Result<()> {
+        sqlx::query("SELECT pg_create_logical_replication_slot($1, 'pgoutput');")
+            .bind(slot_name)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                errors::Errors::ReplicationCreateFailed(format!(
+                    "Failed to create replication slot: {}",
+                    e
+                ))
+            })?;
+
+        Ok(())
+    }
 }

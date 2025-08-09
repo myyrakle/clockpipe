@@ -8,6 +8,7 @@ pub enum Errors {
     GetTableNameFailed(String),
     PublicationCreateFailed(String),
     PublicationAddFailed(String),
+    ReplicationCreateFailed(String),
 }
 
 pub type Result<T> = std::result::Result<T, Errors>;
@@ -32,6 +33,9 @@ impl std::fmt::Display for Errors {
             }
             Errors::PublicationAddFailed(msg) => {
                 write!(f, "Failed to add table to publication: {}", msg)
+            }
+            Errors::ReplicationCreateFailed(msg) => {
+                write!(f, "Failed to create replication slot: {}", msg)
             }
         }
     }
