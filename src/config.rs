@@ -28,6 +28,22 @@ pub enum SourceType {
 pub struct PostgresConfig {
     pub connection: PostgresConnectionConfig,
     pub tables: Vec<PostgresSource>,
+    pub publication_name: Option<String>,
+    pub replication_slot_name: Option<String>,
+}
+
+impl PostgresConfig {
+    pub fn get_publication_name(&self) -> String {
+        self.publication_name
+            .clone()
+            .unwrap_or_else(|| "clockpipe_publication".to_string())
+    }
+
+    pub fn get_replication_slot_name(&self) -> String {
+        self.replication_slot_name
+            .clone()
+            .unwrap_or_else(|| "clockpipe_replication_slot".to_string())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
