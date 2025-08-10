@@ -139,7 +139,7 @@ impl PostgresConnection {
         table_names: &[String],
     ) -> errors::Result<()> {
         let query = format!(
-            "CREATE PUBLICATION IF NOT EXISTS {} FOR ONLY TABLES {}",
+            "CREATE PUBLICATION {} FOR ONLY TABLES {}",
             publication_name,
             table_names.join(", ")
         );

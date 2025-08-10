@@ -53,6 +53,16 @@ impl IExporter for PostgresExporter {
     }
 
     async fn setup(&self) -> Result<(), Errors> {
+        println!("Create Publication");
+        self.postgres_connection
+            .create_publication(&self.postgres_config.get_publication_name(), &[])
+            .await?;
+
+        println!("Create Replication Slot");
+        self.postgres_connection
+            .create_replication_slot(&self.postgres_config.get_replication_slot_name())
+            .await?;
+
         Ok(())
     }
 
