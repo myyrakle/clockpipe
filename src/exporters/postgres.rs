@@ -64,10 +64,7 @@ impl IExporter for PostgresExporter {
                 .postgres_config
                 .tables
                 .iter()
-                .map(|table| match &table.database_name {
-                    Some(db_name) => format!("{}.{}", db_name, table.table_name),
-                    None => table.table_name.clone(),
-                })
+                .map(|table| format!("{}.{}", table.schema_name, table.table_name))
                 .collect();
 
             if source_tables.is_empty() {
@@ -90,6 +87,27 @@ impl IExporter for PostgresExporter {
         }
 
         // 2. Publication Tables Add Step
+        let publication_tables = self
+            .postgres_connection
+            .get_publication_tables(&self.postgres_config.get_publication_name())
+            .await?;
+
+        for table in &self.postgres_config.tables {
+            let table_name = format!("{}.{}", table.schema_name, table.table_name);
+
+            if !publication_tables
+                .iter()
+                .any(|t| t.table_name == table.table_name && t.schema_name == table.schema_name)
+            {
+                println!("Adding table {} to publication", table_name);
+                self.postgres_connection
+                    .add_table_to_publication(
+                        &self.postgres_config.get_publication_name(),
+                        &[table_name],
+                    )
+                    .await?;
+            }
+        }
 
         println!("Create Replication Slot");
         self.postgres_connection

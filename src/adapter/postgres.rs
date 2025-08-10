@@ -139,7 +139,7 @@ pub struct Publication {
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct PublicationTable {
-    pub schema: String,
+    pub schema_name: String,
     pub table_name: String,
 }
 
@@ -149,7 +149,7 @@ impl PostgresConnection {
         publication_name: &str,
     ) -> errors::Result<Option<Publication>> {
         let result: Vec<Publication> =
-            sqlx::query_as("SELECT pubname FROM pg_publication WHERE pubname = $1")
+            sqlx::query_as("SELECT pubname as name FROM pg_publication WHERE pubname = $1")
                 .bind(publication_name)
                 .fetch_all(&self.pool)
                 .await
@@ -172,7 +172,7 @@ impl PostgresConnection {
         publication_name: &str,
     ) -> errors::Result<Vec<PublicationTable>> {
         let result: Vec<PublicationTable> = sqlx::query_as(
-            "SELECT schemaname, tablename FROM pg_publication_tables WHERE pubname = $1",
+            "SELECT schemaname as schema_name, tablename as table_name FROM pg_publication_tables WHERE pubname = $1",
         )
         .bind(publication_name)
         .fetch_all(&self.pool)
