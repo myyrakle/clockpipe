@@ -52,6 +52,10 @@ impl IExporter for PostgresExporter {
         Ok(())
     }
 
+    async fn setup(&self) -> Result<(), Errors> {
+        Ok(())
+    }
+
     async fn peek(&self) -> Result<PeekResult, Errors> {
         unimplemented!("Postgres peek not implemented yet");
     }

@@ -3,6 +3,8 @@ use crate::errors::Errors;
 #[async_trait::async_trait]
 pub trait IExporter {
     async fn ping(&self) -> Result<(), Errors>;
+    async fn setup(&self) -> Result<(), Errors>;
+
     async fn peek(&self) -> Result<PeekResult, Errors>;
     async fn advance(&self, key: &str) -> Result<(), Errors>;
 }
