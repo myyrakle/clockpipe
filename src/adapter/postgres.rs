@@ -241,7 +241,10 @@ impl PostgresConnection {
         Ok(())
     }
 
-    pub async fn get_replication_slot(&self, slot_name: &str) -> errors::Result<ReplicationSlot> {
+    pub async fn find_replication_slot_by_name(
+        &self,
+        slot_name: &str,
+    ) -> errors::Result<Option<ReplicationSlot>> {
         let rows: Vec<ReplicationSlot> = sqlx::query_as(
             "select slot_name, wal_status from pg_replication_slots where slot_name = $1;",
         )
@@ -256,13 +259,10 @@ impl PostgresConnection {
         })?;
 
         if rows.is_empty() {
-            return Err(errors::Errors::ReplicationNotFound(format!(
-                "No replication slot found with name: {}",
-                slot_name
-            )));
+            return Ok(None);
         }
 
-        Ok(rows[0].clone())
+        Ok(Some(rows[0].clone()))
     }
 
     pub async fn peek_wal_changes(

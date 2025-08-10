@@ -109,10 +109,18 @@ impl IExporter for PostgresExporter {
             }
         }
 
+        // 3. Replication Slot Create Step
         println!("Create Replication Slot");
-        self.postgres_connection
-            .create_replication_slot(&self.postgres_config.get_replication_slot_name())
+        let replication_slot = self
+            .postgres_connection
+            .find_replication_slot_by_name(&self.postgres_config.get_replication_slot_name())
             .await?;
+
+        if replication_slot.is_none() {
+            self.postgres_connection
+                .create_replication_slot(&self.postgres_config.get_replication_slot_name())
+                .await?;
+        }
 
         Ok(())
     }
