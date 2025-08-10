@@ -89,6 +89,8 @@ impl IExporter for PostgresExporter {
             );
         }
 
+        // 2. Publication Tables Add Step
+
         println!("Create Replication Slot");
         self.postgres_connection
             .create_replication_slot(&self.postgres_config.get_replication_slot_name())

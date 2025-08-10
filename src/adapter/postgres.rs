@@ -137,6 +137,12 @@ pub struct Publication {
     pub name: String,
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct PublicationTable {
+    pub schema: String,
+    pub table_name: String,
+}
+
 impl PostgresConnection {
     pub async fn find_publication_by_name(
         &self,
@@ -159,6 +165,26 @@ impl PostgresConnection {
         } else {
             Ok(Some(result[0].clone()))
         }
+    }
+
+    pub async fn get_publication_tables(
+        &self,
+        publication_name: &str,
+    ) -> errors::Result<Vec<PublicationTable>> {
+        let result: Vec<PublicationTable> = sqlx::query_as(
+            "SELECT schemaname, tablename FROM pg_publication_tables WHERE pubname = $1",
+        )
+        .bind(publication_name)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| {
+            errors::Errors::PublicationFindFailed(format!(
+                "Failed to get publication tables: {}",
+                e
+            ))
+        })?;
+
+        Ok(result)
     }
 
     pub async fn create_publication(
