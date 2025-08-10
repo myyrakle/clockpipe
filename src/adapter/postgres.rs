@@ -1,4 +1,5 @@
 use sqlx::postgres::PgConnectOptions;
+pub mod pgoutput;
 
 use crate::{config::PostgresConnectionConfig, errors};
 

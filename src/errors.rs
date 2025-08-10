@@ -12,6 +12,7 @@ pub enum Errors {
     ReplicationNotFound(String),
     PeekWalChangesFailed(String),
     ReplicationSlotAdvanceFailed(String),
+    PgOutputParseError(String),
 }
 
 pub type Result<T> = std::result::Result<T, Errors>;
@@ -45,6 +46,7 @@ impl std::fmt::Display for Errors {
             Errors::ReplicationSlotAdvanceFailed(msg) => {
                 write!(f, "Failed to advance replication slot: {}", msg)
             }
+            Errors::PgOutputParseError(msg) => write!(f, "Failed to parse PgOutput: {}", msg),
         }
     }
 }
