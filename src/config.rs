@@ -57,7 +57,7 @@ pub struct PostgresConnectionConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PostgresSource {
-    pub database_name: String,
+    pub database_name: Option<String>,
     pub table_name: String,
 }
 

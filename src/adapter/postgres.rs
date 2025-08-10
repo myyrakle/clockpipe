@@ -132,14 +132,42 @@ impl PostgresConnection {
     }
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct Publication {
+    pub name: String,
+}
+
 impl PostgresConnection {
+    pub async fn find_publication_by_name(
+        &self,
+        publication_name: &str,
+    ) -> errors::Result<Option<Publication>> {
+        let result: Vec<Publication> =
+            sqlx::query_as("SELECT pubname FROM pg_publication WHERE pubname = $1")
+                .bind(publication_name)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| {
+                    errors::Errors::PublicationFindFailed(format!(
+                        "Failed to find publication by name: {}",
+                        e
+                    ))
+                })?;
+
+        if result.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(result[0].clone()))
+        }
+    }
+
     pub async fn create_publication(
         &self,
         publication_name: &str,
         table_names: &[String],
     ) -> errors::Result<()> {
         let query = format!(
-            "CREATE PUBLICATION {} FOR ONLY TABLES {}",
+            "CREATE PUBLICATION {} FOR TABLE {}",
             publication_name,
             table_names.join(", ")
         );

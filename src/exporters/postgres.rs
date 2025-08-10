@@ -53,9 +53,27 @@ impl IExporter for PostgresExporter {
     }
 
     async fn setup(&self) -> Result<(), Errors> {
+        let source_tables: Vec<String> = self
+            .postgres_config
+            .tables
+            .iter()
+            .map(|table| match &table.database_name {
+                Some(db_name) => format!("{}.{}", db_name, table.table_name),
+                None => table.table_name.clone(),
+            })
+            .collect();
+
+        if source_tables.is_empty() {
+            return Err(Errors::PublicationCreateFailed(
+                "No source tables specified in Postgres configuration".to_string(),
+            ));
+        }
+
+        println!("Source Tables: {:?}", source_tables);
+
         println!("Create Publication");
         self.postgres_connection
-            .create_publication(&self.postgres_config.get_publication_name(), &[])
+            .create_publication(&self.postgres_config.get_publication_name(), &source_tables)
             .await?;
 
         println!("Create Replication Slot");

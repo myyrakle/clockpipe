@@ -8,6 +8,7 @@ pub enum Errors {
     GetTableNameFailed(String),
     PublicationCreateFailed(String),
     PublicationAddFailed(String),
+    PublicationFindFailed(String),
     ReplicationCreateFailed(String),
     ReplicationNotFound(String),
     PeekWalChangesFailed(String),
@@ -38,6 +39,7 @@ impl std::fmt::Display for Errors {
             Errors::PublicationAddFailed(msg) => {
                 write!(f, "Failed to add table to publication: {}", msg)
             }
+            Errors::PublicationFindFailed(msg) => write!(f, "Publication not found: {}", msg),
             Errors::ReplicationCreateFailed(msg) => {
                 write!(f, "Failed to create replication slot: {}", msg)
             }
