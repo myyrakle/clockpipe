@@ -3,6 +3,7 @@ use crate::{
     errors::Errors,
     interface::{IExporter, PeekResult},
 };
+use log::info;
 
 #[derive(Clone)]
 pub struct PostgresExporter {
@@ -47,7 +48,7 @@ impl IExporter for PostgresExporter {
             .await
             .map_err(|e| Errors::DatabasePingError(format!("ClickHouse ping failed: {}", e)))?;
 
-        println!("Postgres and ClickHouse connections are healthy.");
+        info!("Postgres and ClickHouse connections are healthy.");
 
         Ok(())
     }
@@ -73,14 +74,14 @@ impl IExporter for PostgresExporter {
                 ));
             }
 
-            println!("Source Tables: {:?}", source_tables);
+            info!("Source Tables: {:?}", source_tables);
 
-            println!("Create Publication");
+            info!("Create Publication");
             self.postgres_connection
                 .create_publication(&self.postgres_config.get_publication_name(), &source_tables)
                 .await?;
         } else {
-            println!(
+            info!(
                 "Publication {} already exists, skipping creation.",
                 self.postgres_config.get_publication_name()
             );
@@ -99,7 +100,7 @@ impl IExporter for PostgresExporter {
                 .iter()
                 .any(|t| t.table_name == table.table_name && t.schema_name == table.schema_name)
             {
-                println!("Adding table {} to publication", table_name);
+                info!("Adding table {} to publication", table_name);
                 self.postgres_connection
                     .add_table_to_publication(
                         &self.postgres_config.get_publication_name(),
@@ -110,7 +111,7 @@ impl IExporter for PostgresExporter {
         }
 
         // 3. Replication Slot Create Step
-        println!("Create Replication Slot");
+        info!("Create Replication Slot");
         let replication_slot = self
             .postgres_connection
             .find_replication_slot_by_name(&self.postgres_config.get_replication_slot_name())

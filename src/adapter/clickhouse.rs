@@ -1,4 +1,5 @@
 use crate::errors;
+use log::info;
 
 #[derive(Clone)]
 pub struct ClickhouseConnection {
@@ -12,6 +13,8 @@ impl ClickhouseConnection {
             .with_user(config.username.clone())
             .with_password(config.password.clone())
             .with_database(config.database.clone());
+
+        info!("Created ClickHouse connection to {}:{}", config.host, config.port);
 
         ClickhouseConnection { client }
     }
