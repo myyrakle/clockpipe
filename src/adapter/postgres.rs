@@ -132,14 +132,68 @@ impl PostgresConnection {
     }
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct Publication {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct PublicationTable {
+    pub schema_name: String,
+    pub table_name: String,
+}
+
 impl PostgresConnection {
+    pub async fn find_publication_by_name(
+        &self,
+        publication_name: &str,
+    ) -> errors::Result<Option<Publication>> {
+        let result: Vec<Publication> =
+            sqlx::query_as("SELECT pubname as name FROM pg_publication WHERE pubname = $1")
+                .bind(publication_name)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| {
+                    errors::Errors::PublicationFindFailed(format!(
+                        "Failed to find publication by name: {}",
+                        e
+                    ))
+                })?;
+
+        if result.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(result[0].clone()))
+        }
+    }
+
+    pub async fn get_publication_tables(
+        &self,
+        publication_name: &str,
+    ) -> errors::Result<Vec<PublicationTable>> {
+        let result: Vec<PublicationTable> = sqlx::query_as(
+            "SELECT schemaname as schema_name, tablename as table_name FROM pg_publication_tables WHERE pubname = $1",
+        )
+        .bind(publication_name)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| {
+            errors::Errors::PublicationFindFailed(format!(
+                "Failed to get publication tables: {}",
+                e
+            ))
+        })?;
+
+        Ok(result)
+    }
+
     pub async fn create_publication(
         &self,
         publication_name: &str,
         table_names: &[String],
     ) -> errors::Result<()> {
         let query = format!(
-            "CREATE PUBLICATION IF NOT EXISTS {} FOR ONLY TABLES {}",
+            "CREATE PUBLICATION {} FOR TABLE {}",
             publication_name,
             table_names.join(", ")
         );
@@ -187,7 +241,10 @@ impl PostgresConnection {
         Ok(())
     }
 
-    pub async fn get_replication_slot(&self, slot_name: &str) -> errors::Result<ReplicationSlot> {
+    pub async fn find_replication_slot_by_name(
+        &self,
+        slot_name: &str,
+    ) -> errors::Result<Option<ReplicationSlot>> {
         let rows: Vec<ReplicationSlot> = sqlx::query_as(
             "select slot_name, wal_status from pg_replication_slots where slot_name = $1;",
         )
@@ -202,13 +259,10 @@ impl PostgresConnection {
         })?;
 
         if rows.is_empty() {
-            return Err(errors::Errors::ReplicationNotFound(format!(
-                "No replication slot found with name: {}",
-                slot_name
-            )));
+            return Ok(None);
         }
 
-        Ok(rows[0].clone())
+        Ok(Some(rows[0].clone()))
     }
 
     pub async fn peek_wal_changes(

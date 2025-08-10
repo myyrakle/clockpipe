@@ -51,6 +51,12 @@ impl<T: IExporter> Pipe<T> {
     async fn initialize(&self) {
         println!("Initializing Postgres exporter...");
 
+        println!("Setup");
+        self.exporter
+            .setup()
+            .await
+            .expect("Failed to setup exporter");
+
         // create publication if not exists
 
         // create replication if not exists
