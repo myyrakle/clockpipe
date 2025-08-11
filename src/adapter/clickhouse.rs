@@ -9,7 +9,7 @@ pub struct ClickhouseConnection {
 
 #[derive(Debug, Serialize, Deserialize, clickhouse::Row)]
 pub struct ClickhouseColumn {
-    pub column_index: i32,
+    pub column_index: u64,
     pub column_name: String,
     pub data_type: String,
     pub is_in_primary_key: bool,
@@ -62,7 +62,7 @@ impl ClickhouseConnection {
                     type as data_type,
                     is_in_primary_key as is_primary_key
                 FROM system.columns 
-                WHERE table = $1 AND database = $2
+                WHERE table = ? AND database = ?
                 ORDER BY position
             "#,
             )

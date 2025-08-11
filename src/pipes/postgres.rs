@@ -151,12 +151,20 @@ impl PostgresPipe {
         log::info!("Setting up table in ClickHouse...");
 
         for table in &self.postgres_config.tables {
-            let columns = self
+            let postgres_columns = self
                 .postgres_connection
                 .list_columns_by_tablename(&table.schema_name, &table.table_name)
                 .await?;
 
-            if !columns.is_empty() {
+            let clickhouse_columns = self
+                .clickhouse_connection
+                .list_columns_by_tablename(
+                    &self.clickhouse_config.connection.database,
+                    &table.table_name,
+                )
+                .await?;
+
+            if !clickhouse_columns.is_empty() {
                 // TODO: 컬럼이 추가된 경우에 대한 대응
 
                 log::info!(
@@ -172,7 +180,7 @@ impl PostgresPipe {
             let create_table_query = generate_clickhouse_create_table_query(
                 &self.clickhouse_config.connection.database,
                 &table.table_name,
-                &columns,
+                &postgres_columns,
             );
 
             self.clickhouse_connection
