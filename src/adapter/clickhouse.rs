@@ -1,8 +1,18 @@
+use serde::{Deserialize, Serialize};
+
 use crate::errors;
 
 #[derive(Clone)]
 pub struct ClickhouseConnection {
     client: clickhouse::Client,
+}
+
+#[derive(Debug, Serialize, Deserialize, clickhouse::Row)]
+pub struct ClickhouseColumn {
+    pub column_index: i32,
+    pub column_name: String,
+    pub data_type: String,
+    pub is_in_primary_key: bool,
 }
 
 impl ClickhouseConnection {
@@ -35,5 +45,38 @@ impl ClickhouseConnection {
             })?;
 
         Ok(())
+    }
+
+    pub async fn list_columns_by_tablename(
+        &self,
+        database_name: &str,
+        table_name: &str,
+    ) -> errors::Result<Vec<ClickhouseColumn>> {
+        let result: Vec<ClickhouseColumn> = self
+            .client
+            .query(
+                r#"
+                SELECT 
+                    position as column_index,
+                    name as column_name,
+                    type as data_type,
+                    is_in_primary_key as is_primary_key
+                FROM system.columns 
+                WHERE table = $1 AND database = $2
+                ORDER BY position
+            "#,
+            )
+            .bind(table_name)
+            .bind(database_name)
+            .fetch_all()
+            .await
+            .map_err(|e| {
+                crate::errors::Errors::ListTableColumnsFailed(format!(
+                    "Failed to list columns for table {}: {}",
+                    table_name, e
+                ))
+            })?;
+
+        Ok(result)
     }
 }
