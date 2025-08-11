@@ -289,6 +289,59 @@ impl PostgresConnection {
         Ok(Some(rows[0].clone()))
     }
 
+    pub async fn list_columns_by_tablename(
+        &self,
+        table_name: &str,
+    ) -> errors::Result<Vec<PostgresColumnType>> {
+        let query = format!(
+            r#"
+             SELECT 
+                c.ordinal_position as column_index,
+                c.column_name as column_name,
+                c.udt_name as data_type, 
+                coalesce(c.character_maximum_length, 0) as length,
+                c.is_nullable = 'YES' as nullable,
+                EXISTS(
+                    SELECT 1
+                    FROM 
+                        information_schema.table_constraints tc
+                    JOIN 
+                        information_schema.key_column_usage kcu 
+                        ON tc.constraint_name = kcu.constraint_name
+                        AND tc.table_schema = kcu.table_schema
+                    WHERE 1=1
+                        AND tc.constraint_type = 'PRIMARY KEY'
+                        AND tc.table_schema = c.table_schema
+                        AND tc.table_name = c.table_name
+                        AND kcu.column_name = c.column_name
+                ) as is_primary_key,
+                coalesce(pgd.description, '') as comment
+            FROM 
+                information_schema.columns c
+            LEFT JOIN 
+                pg_catalog.pg_description pgd 
+            ON pgd.objsubid = c.ordinal_position
+            AND 
+                pgd.objoid = (
+                    SELECT oid 
+                    FROM pg_catalog.pg_class 
+                    WHERE relname = c.table_name
+                )
+            WHERE c.table_name = 'nc_usr_account'
+        "#
+        );
+
+        let rows: Vec<PostgresColumnType> = sqlx::query_as(&query)
+            .bind(table_name)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| {
+                errors::Errors::GetTableNameFailed(format!("Failed to get columns: {}", e))
+            })?;
+
+        Ok(rows)
+    }
+
     pub async fn peek_wal_changes(
         &self,
         publication_name: &str,
