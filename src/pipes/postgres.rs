@@ -1,18 +1,18 @@
 use crate::{
-    adapter,
+    adapter, command,
     errors::Errors,
-    interface::{IExporter, PeekResult},
+    interface::{IPipe, PeekResult},
 };
 
 #[derive(Clone)]
-pub struct PostgresExporter {
+pub struct PostgresPipe {
     pub postgres_config: crate::config::PostgresConfig,
     pub clickhouse_config: crate::config::ClickHouseConfig,
     postgres_connection: adapter::postgres::PostgresConnection,
     clickhouse_connection: adapter::clickhouse::ClickhouseConnection,
 }
 
-impl PostgresExporter {
+impl PostgresPipe {
     pub async fn new(
         postgres_config: crate::config::PostgresConfig,
         clickhouse_config: crate::config::ClickHouseConfig,
@@ -25,7 +25,7 @@ impl PostgresExporter {
         let clickhouse_connection =
             adapter::clickhouse::ClickhouseConnection::new(&clickhouse_config.connection);
 
-        PostgresExporter {
+        PostgresPipe {
             postgres_config,
             clickhouse_config,
             postgres_connection,
@@ -35,7 +35,7 @@ impl PostgresExporter {
 }
 
 #[async_trait::async_trait]
-impl IExporter for PostgresExporter {
+impl IPipe for PostgresPipe {
     async fn ping(&self) -> Result<(), Errors> {
         self.postgres_connection
             .ping()
@@ -52,39 +52,13 @@ impl IExporter for PostgresExporter {
         Ok(())
     }
 
-    async fn initialize(&self) {
-        log::info!("Initializing Postgres exporter...");
-
-        log::info!("Setup");
-        self.setup().await.expect("Failed to setup exporter");
-    }
-
-    async fn sync(&self) {
-        loop {
-            // Peek new rows
-            let peek_result = self.peek().await;
-
-            let peek_result = match peek_result {
-                Ok(peek) => peek,
-                Err(e) => {
-                    log::error!("Error peeking: {:?}", e);
-                    continue;
-                }
-            };
-
-            // Handle peek result
-            // ...
-
-            // Advance the exporter
-            if let Err(e) = self.advance(&peek_result.advance_key).await {
-                log::error!("Error advancing exporter: {:?}", e);
-                continue;
-            }
-        }
+    async fn run_pipe(&self) {
+        self.initialize().await;
+        self.sync().await;
     }
 }
 
-impl PostgresExporter {
+impl PostgresPipe {
     async fn setup(&self) -> Result<(), Errors> {
         // 1. Publication Create Step
         let publication = self
@@ -158,11 +132,73 @@ impl PostgresExporter {
         Ok(())
     }
 
+    async fn initialize(&self) {
+        log::info!("Initializing Postgres exporter...");
+
+        log::info!("Setup");
+        self.setup().await.expect("Failed to setup exporter");
+    }
+
+    async fn sync(&self) {
+        loop {
+            // Peek new rows
+            let peek_result = self.peek().await;
+
+            let peek_result = match peek_result {
+                Ok(peek) => peek,
+                Err(e) => {
+                    log::error!("Error peeking: {:?}", e);
+                    continue;
+                }
+            };
+
+            // Handle peek result
+            // ...
+
+            // Advance the exporter
+            if let Err(e) = self.advance(&peek_result.advance_key).await {
+                log::error!("Error advancing exporter: {:?}", e);
+                continue;
+            }
+        }
+    }
+
     async fn peek(&self) -> Result<PeekResult, Errors> {
         unimplemented!("Postgres peek not implemented yet");
     }
 
     async fn advance(&self, _key: &str) -> Result<(), Errors> {
         unimplemented!("Postgres advance not implemented yet");
+    }
+}
+
+pub async fn run_postgres_pipe(config_options: &command::run::ConfigOptions) {
+    let config = config_options
+        .read_config_from_file()
+        .expect("Failed to read configuration");
+
+    let pipe = PostgresPipe::new(
+        config
+            .source
+            .postgres
+            .clone()
+            .expect("Postgres config is required"),
+        config
+            .target
+            .clickhouse
+            .clone()
+            .expect("Clickhouse config is required"),
+    )
+    .await;
+
+    if let Err(error) = pipe.ping().await {
+        log::error!("Failed to ping Postgres exporter: {:?}", error);
+        return;
+    }
+
+    tokio::select! {
+        _ = pipe.run_pipe() => {
+            log::info!("Postgres pipe running.");
+        }
     }
 }

@@ -1,4 +1,3 @@
-pub mod pipe;
 use std::env;
 
 use clap::Parser;
@@ -6,8 +5,8 @@ pub mod adapter;
 mod command;
 pub mod config;
 pub mod errors;
-pub mod exporters;
 pub mod interface;
+pub mod pipes;
 
 #[tokio::main]
 async fn main() {
@@ -22,7 +21,7 @@ async fn main() {
         command::SubCommand::Run(command) => {
             log::info!("config-file: {}", command.value.config_file);
 
-            pipe::run_postgres_pipe(&command.value).await;
+            pipes::run_postgres_pipe(&command.value).await;
         }
     }
 }

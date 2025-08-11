@@ -1,10 +1,9 @@
 use crate::errors::Errors;
 
 #[async_trait::async_trait]
-pub trait IExporter {
+pub trait IPipe {
     async fn ping(&self) -> Result<(), Errors>;
-    async fn initialize(&self);
-    async fn sync(&self);
+    async fn run_pipe(&self);
 }
 
 #[derive(Debug, Clone)]
