@@ -1,4 +1,5 @@
 use crate::{command, exporters, interface::IExporter};
+use log::{error, info};
 
 pub async fn run_postgres_pipe(config_options: &command::run::ConfigOptions) {
     let config = config_options
@@ -22,13 +23,13 @@ pub async fn run_postgres_pipe(config_options: &command::run::ConfigOptions) {
     let postgres_pipe = new_pipe(exporter).await;
 
     if let Err(error) = postgres_pipe.exporter.ping().await {
-        eprintln!("Failed to ping Postgres exporter: {:?}", error);
+        error!("Failed to ping Postgres exporter: {:?}", error);
         return;
     }
 
     tokio::select! {
         _ = postgres_pipe.run_pipe() => {
-            println!("Postgres exporter running.");
+            info!("Postgres exporter running.");
         }
     }
 }
@@ -49,9 +50,9 @@ impl<T: IExporter> Pipe<T> {
     }
 
     async fn initialize(&self) {
-        println!("Initializing Postgres exporter...");
+        info!("Initializing Postgres exporter...");
 
-        println!("Setup");
+        info!("Setup");
         self.exporter
             .setup()
             .await
@@ -72,7 +73,7 @@ impl<T: IExporter> Pipe<T> {
             let peek_result = match peek_result {
                 Ok(peek) => peek,
                 Err(e) => {
-                    eprintln!("Error peeking: {:?}", e);
+                    error!("Error peeking: {:?}", e);
                     continue;
                 }
             };
@@ -82,7 +83,7 @@ impl<T: IExporter> Pipe<T> {
 
             // Advance the exporter
             if let Err(e) = self.exporter.advance(&peek_result.advance_key).await {
-                eprintln!("Error advancing exporter: {:?}", e);
+                error!("Error advancing exporter: {:?}", e);
                 continue;
             }
         }

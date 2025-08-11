@@ -2,6 +2,7 @@ use sqlx::postgres::PgConnectOptions;
 pub mod pgoutput;
 
 use crate::{config::PostgresConnectionConfig, errors};
+use log::{debug, info};
 
 #[derive(Debug, Clone)]
 pub struct PostgresConnection {
@@ -27,7 +28,7 @@ impl PostgresConnection {
 
         match result {
             Ok(pool) => {
-                println!("Successfully connected to Postgres database");
+                info!("Successfully connected to Postgres database");
 
                 Ok(PostgresConnection { pool })
             }
@@ -192,6 +193,8 @@ impl PostgresConnection {
         publication_name: &str,
         table_names: &[String],
     ) -> errors::Result<()> {
+        debug!("Creating publication {} for tables: {:?}", publication_name, table_names);
+        
         let query = format!(
             "CREATE PUBLICATION {} FOR TABLE {}",
             publication_name,
@@ -201,6 +204,8 @@ impl PostgresConnection {
         sqlx::query(&query).execute(&self.pool).await.map_err(|e| {
             errors::Errors::PublicationCreateFailed(format!("Failed to create publication: {}", e))
         })?;
+
+        info!("Successfully created publication {}", publication_name);
 
         Ok(())
     }
@@ -227,6 +232,8 @@ impl PostgresConnection {
     }
 
     pub async fn create_replication_slot(&self, slot_name: &str) -> errors::Result<()> {
+        debug!("Creating replication slot: {}", slot_name);
+        
         sqlx::query("SELECT pg_create_logical_replication_slot($1, 'pgoutput');")
             .bind(slot_name)
             .execute(&self.pool)
@@ -237,6 +244,8 @@ impl PostgresConnection {
                     e
                 ))
             })?;
+
+        info!("Successfully created replication slot {}", slot_name);
 
         Ok(())
     }
