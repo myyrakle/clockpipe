@@ -59,7 +59,16 @@ impl IPipe for PostgresPipe {
 }
 
 impl PostgresPipe {
-    async fn setup(&self) -> Result<(), Errors> {
+    async fn initialize(&self) {
+        log::info!("Initializing Postgres exporter...");
+
+        log::info!("Setup");
+        self.setup_publication()
+            .await
+            .expect("Failed to setup exporter");
+    }
+
+    async fn setup_publication(&self) -> Result<(), Errors> {
         // 1. Publication Create Step
         let publication = self
             .postgres_connection
@@ -131,14 +140,9 @@ impl PostgresPipe {
 
         Ok(())
     }
+}
 
-    async fn initialize(&self) {
-        log::info!("Initializing Postgres exporter...");
-
-        log::info!("Setup");
-        self.setup().await.expect("Failed to setup exporter");
-    }
-
+impl PostgresPipe {
     async fn sync(&self) {
         loop {
             // Peek new rows
