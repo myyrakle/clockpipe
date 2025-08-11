@@ -3,7 +3,6 @@ pub mod mapper;
 pub mod pgoutput;
 
 use crate::{config::PostgresConnectionConfig, errors};
-use log::{debug, info};
 
 #[derive(Debug, Clone)]
 pub struct PostgresConnection {
@@ -29,7 +28,7 @@ impl PostgresConnection {
 
         match result {
             Ok(pool) => {
-                info!("Successfully connected to Postgres database");
+                log::info!("Successfully connected to Postgres database");
 
                 Ok(PostgresConnection { pool })
             }
@@ -205,9 +204,10 @@ impl PostgresConnection {
         publication_name: &str,
         table_names: &[String],
     ) -> errors::Result<()> {
-        debug!(
+        log::debug!(
             "Creating publication {} for tables: {:?}",
-            publication_name, table_names
+            publication_name,
+            table_names
         );
 
         let query = format!(
@@ -220,7 +220,7 @@ impl PostgresConnection {
             errors::Errors::PublicationCreateFailed(format!("Failed to create publication: {}", e))
         })?;
 
-        info!("Successfully created publication {}", publication_name);
+        log::info!("Successfully created publication {}", publication_name);
 
         Ok(())
     }
@@ -247,7 +247,7 @@ impl PostgresConnection {
     }
 
     pub async fn create_replication_slot(&self, slot_name: &str) -> errors::Result<()> {
-        debug!("Creating replication slot: {}", slot_name);
+        log::debug!("Creating replication slot: {}", slot_name);
 
         sqlx::query("SELECT pg_create_logical_replication_slot($1, 'pgoutput');")
             .bind(slot_name)
@@ -260,7 +260,7 @@ impl PostgresConnection {
                 ))
             })?;
 
-        info!("Successfully created replication slot {}", slot_name);
+        log::info!("Successfully created replication slot {}", slot_name);
 
         Ok(())
     }
@@ -291,6 +291,7 @@ impl PostgresConnection {
 
     pub async fn list_columns_by_tablename(
         &self,
+        database_name: &str,
         table_name: &str,
     ) -> errors::Result<Vec<PostgresColumnType>> {
         let query = format!(
@@ -327,16 +328,17 @@ impl PostgresConnection {
                     FROM pg_catalog.pg_class 
                     WHERE relname = c.table_name
                 )
-            WHERE c.table_name = 'nc_usr_account'
+            WHERE c.table_name = $1 AND c.table_schema = $2
         "#
         );
 
         let rows: Vec<PostgresColumnType> = sqlx::query_as(&query)
             .bind(table_name)
+            .bind(database_name)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| {
-                errors::Errors::GetTableNameFailed(format!("Failed to get columns: {}", e))
+                errors::Errors::ListTableColumnsFailed(format!("Failed to get columns: {}", e))
             })?;
 
         Ok(rows)

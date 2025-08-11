@@ -2,10 +2,12 @@
 pub enum Errors {
     ConfigReadError(String),
     IOError(std::io::Error),
+    ClickhouseDatabaseError(String),
     DatabaseConnectionError(String),
     DatabasePingError(String),
     TableNotFoundError(String),
     GetTableNameFailed(String),
+    ListTableColumnsFailed(String),
     PublicationCreateFailed(String),
     PublicationAddFailed(String),
     PublicationFindFailed(String),
@@ -49,6 +51,10 @@ impl std::fmt::Display for Errors {
                 write!(f, "Failed to advance replication slot: {}", msg)
             }
             Errors::PgOutputParseError(msg) => write!(f, "Failed to parse PgOutput: {}", msg),
+            Errors::ListTableColumnsFailed(msg) => {
+                write!(f, "Failed to list table columns: {}", msg)
+            }
+            Errors::ClickhouseDatabaseError(msg) => write!(f, "ClickHouse database error: {}", msg),
         }
     }
 }

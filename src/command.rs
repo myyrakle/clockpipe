@@ -15,7 +15,6 @@ pub enum SubCommand {
 pub mod run {
     use clap::Args;
     use serde::Deserialize;
-    use log::{debug, info};
 
     use crate::errors;
 
@@ -27,17 +26,20 @@ pub mod run {
 
     impl ConfigOptions {
         pub fn read_config_from_file(&self) -> errors::Result<crate::config::Configuraion> {
-            debug!("Reading configuration from file: {}", self.config_file);
-            
+            log::debug!("Reading configuration from file: {}", self.config_file);
+
             let config_content = std::fs::read_to_string(&self.config_file)?;
 
             let parse_result = serde_json::from_str(&config_content);
 
             match parse_result {
                 Ok(config) => {
-                    info!("Successfully loaded configuration from {}", self.config_file);
+                    log::info!(
+                        "Successfully loaded configuration from {}",
+                        self.config_file
+                    );
                     Ok(config)
-                },
+                }
                 Err(error) => {
                     return Err(errors::Errors::ConfigReadError(format!(
                         "Failed to parse configuration file: {}",
