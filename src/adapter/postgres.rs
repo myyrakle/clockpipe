@@ -1,4 +1,5 @@
 use sqlx::postgres::PgConnectOptions;
+pub mod mapper;
 pub mod pgoutput;
 
 use crate::{config::PostgresConnectionConfig, errors};
@@ -142,6 +143,17 @@ pub struct Publication {
 pub struct PublicationTable {
     pub schema_name: String,
     pub table_name: String,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct PostgresColumnType {
+    pub column_index: i32,
+    pub column_name: String,
+    pub data_type: String,
+    pub length: i32,
+    pub nullable: bool,
+    pub is_primary_key: bool,
+    pub comment: String,
 }
 
 impl PostgresConnection {
