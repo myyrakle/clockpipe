@@ -53,6 +53,39 @@ impl IExporter for PostgresExporter {
         Ok(())
     }
 
+    async fn initialize(&self) {
+        info!("Initializing Postgres exporter...");
+
+        info!("Setup");
+        self.setup().await.expect("Failed to setup exporter");
+    }
+
+    async fn sync(&self) {
+        loop {
+            // Peek new rows
+            let peek_result = self.peek().await;
+
+            let peek_result = match peek_result {
+                Ok(peek) => peek,
+                Err(e) => {
+                    log::error!("Error peeking: {:?}", e);
+                    continue;
+                }
+            };
+
+            // Handle peek result
+            // ...
+
+            // Advance the exporter
+            if let Err(e) = self.advance(&peek_result.advance_key).await {
+                log::error!("Error advancing exporter: {:?}", e);
+                continue;
+            }
+        }
+    }
+}
+
+impl PostgresExporter {
     async fn setup(&self) -> Result<(), Errors> {
         // 1. Publication Create Step
         let publication = self

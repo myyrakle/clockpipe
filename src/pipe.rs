@@ -45,47 +45,7 @@ pub async fn new_pipe<T: IExporter>(exporter: T) -> Pipe<T> {
 
 impl<T: IExporter> Pipe<T> {
     async fn run_pipe(&self) {
-        self.initialize().await;
-        self.sync().await;
-    }
-
-    async fn initialize(&self) {
-        info!("Initializing Postgres exporter...");
-
-        info!("Setup");
-        self.exporter
-            .setup()
-            .await
-            .expect("Failed to setup exporter");
-
-        // create publication if not exists
-
-        // create replication if not exists
-
-        // create table if not exists & copy data from the table
-    }
-
-    async fn sync(&self) {
-        loop {
-            // Peek new rows
-            let peek_result = self.exporter.peek().await;
-
-            let peek_result = match peek_result {
-                Ok(peek) => peek,
-                Err(e) => {
-                    error!("Error peeking: {:?}", e);
-                    continue;
-                }
-            };
-
-            // Handle peek result
-            // ...
-
-            // Advance the exporter
-            if let Err(e) = self.exporter.advance(&peek_result.advance_key).await {
-                error!("Error advancing exporter: {:?}", e);
-                continue;
-            }
-        }
+        self.exporter.initialize().await;
+        self.exporter.sync().await;
     }
 }
