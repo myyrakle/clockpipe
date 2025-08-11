@@ -1,9 +1,4 @@
-pub struct PostgresColumnType {
-    pub name: String,
-    pub data_type: String,
-    pub length: u32,
-    pub nullable: bool,
-}
+use crate::adapter::postgres::PostgresColumnType;
 
 pub fn convert_postgres_column_type_to_clickhouse(
     postgres_column_type: &PostgresColumnType,
