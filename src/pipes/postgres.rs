@@ -1,5 +1,6 @@
 use crate::{
-    adapter, command,
+    adapter::{self, postgres::mapper::generate_clickhouse_create_table_query},
+    command,
     errors::Errors,
     interface::{IPipe, PeekResult},
 };
@@ -62,10 +63,15 @@ impl PostgresPipe {
     async fn initialize(&self) {
         log::info!("Initializing Postgres exporter...");
 
-        log::info!("Setup");
+        log::info!("Setup publication and replication slot");
         self.setup_publication()
             .await
             .expect("Failed to setup exporter");
+
+        log::info!("Setup ClickHouse table");
+        self.setup_table()
+            .await
+            .expect("Failed to setup ClickHouse table");
     }
 
     async fn setup_publication(&self) -> Result<(), Errors> {
@@ -135,6 +141,42 @@ impl PostgresPipe {
         if replication_slot.is_none() {
             self.postgres_connection
                 .create_replication_slot(&self.postgres_config.get_replication_slot_name())
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    async fn setup_table(&self) -> Result<(), Errors> {
+        log::info!("Setting up table in ClickHouse...");
+
+        for table in &self.postgres_config.tables {
+            let columns = self
+                .postgres_connection
+                .list_columns_by_tablename(&table.schema_name, &table.table_name)
+                .await?;
+
+            if !columns.is_empty() {
+                // TODO: 컬럼이 추가된 경우에 대한 대응
+
+                log::info!(
+                    "{}.{} Table is Already exists in ClickHouse, skipping creation.",
+                    table.schema_name,
+                    table.table_name,
+                );
+
+                continue;
+            }
+
+            log::info!("Creating ClickHouse table for {}", table.table_name);
+            let create_table_query = generate_clickhouse_create_table_query(
+                &self.clickhouse_config.connection.database,
+                &table.table_name,
+                &columns,
+            );
+
+            self.clickhouse_connection
+                .execute_query(&create_table_query)
                 .await?;
         }
 

@@ -2,6 +2,7 @@
 pub enum Errors {
     ConfigReadError(String),
     IOError(std::io::Error),
+    ClickhouseDatabaseError(String),
     DatabaseConnectionError(String),
     DatabasePingError(String),
     TableNotFoundError(String),
@@ -53,6 +54,7 @@ impl std::fmt::Display for Errors {
             Errors::ListTableColumnsFailed(msg) => {
                 write!(f, "Failed to list table columns: {}", msg)
             }
+            Errors::ClickhouseDatabaseError(msg) => write!(f, "ClickHouse database error: {}", msg),
         }
     }
 }

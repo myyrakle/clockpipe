@@ -79,4 +79,15 @@ impl ClickhouseConnection {
 
         Ok(result)
     }
+
+    pub async fn execute_query(&self, query: &str) -> errors::Result<()> {
+        self.client.query(query).execute().await.map_err(|e| {
+            crate::errors::Errors::DatabaseConnectionError(format!(
+                "Failed to execute query: {}",
+                e
+            ))
+        })?;
+
+        Ok(())
+    }
 }
