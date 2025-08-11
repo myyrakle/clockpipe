@@ -193,8 +193,11 @@ impl PostgresConnection {
         publication_name: &str,
         table_names: &[String],
     ) -> errors::Result<()> {
-        debug!("Creating publication {} for tables: {:?}", publication_name, table_names);
-        
+        debug!(
+            "Creating publication {} for tables: {:?}",
+            publication_name, table_names
+        );
+
         let query = format!(
             "CREATE PUBLICATION {} FOR TABLE {}",
             publication_name,
@@ -233,7 +236,7 @@ impl PostgresConnection {
 
     pub async fn create_replication_slot(&self, slot_name: &str) -> errors::Result<()> {
         debug!("Creating replication slot: {}", slot_name);
-        
+
         sqlx::query("SELECT pg_create_logical_replication_slot($1, 'pgoutput');")
             .bind(slot_name)
             .execute(&self.pool)
@@ -286,9 +289,9 @@ impl PostgresConnection {
 		        FROM pg_logical_slot_peek_binary_changes($1, NULL, $2, 'proto_version', '1', 'publication_names', $3)
             "#,
         )
-        .bind(publication_name)
         .bind(replication_slot_name)
         .bind(limit)
+        .bind(publication_name)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| {
