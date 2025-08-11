@@ -3,7 +3,6 @@ use crate::{
     errors::Errors,
     interface::{IExporter, PeekResult},
 };
-use log::info;
 
 #[derive(Clone)]
 pub struct PostgresExporter {
@@ -48,15 +47,15 @@ impl IExporter for PostgresExporter {
             .await
             .map_err(|e| Errors::DatabasePingError(format!("ClickHouse ping failed: {}", e)))?;
 
-        info!("Postgres and ClickHouse connections are healthy.");
+        log::info!("Postgres and ClickHouse connections are healthy.");
 
         Ok(())
     }
 
     async fn initialize(&self) {
-        info!("Initializing Postgres exporter...");
+        log::info!("Initializing Postgres exporter...");
 
-        info!("Setup");
+        log::info!("Setup");
         self.setup().await.expect("Failed to setup exporter");
     }
 
@@ -107,14 +106,14 @@ impl PostgresExporter {
                 ));
             }
 
-            info!("Source Tables: {:?}", source_tables);
+            log::info!("Source Tables: {:?}", source_tables);
 
-            info!("Create Publication");
+            log::info!("Create Publication");
             self.postgres_connection
                 .create_publication(&self.postgres_config.get_publication_name(), &source_tables)
                 .await?;
         } else {
-            info!(
+            log::info!(
                 "Publication {} already exists, skipping creation.",
                 self.postgres_config.get_publication_name()
             );
@@ -133,7 +132,7 @@ impl PostgresExporter {
                 .iter()
                 .any(|t| t.table_name == table.table_name && t.schema_name == table.schema_name)
             {
-                info!("Adding table {} to publication", table_name);
+                log::info!("Adding table {} to publication", table_name);
                 self.postgres_connection
                     .add_table_to_publication(
                         &self.postgres_config.get_publication_name(),
@@ -144,7 +143,7 @@ impl PostgresExporter {
         }
 
         // 3. Replication Slot Create Step
-        info!("Create Replication Slot");
+        log::info!("Create Replication Slot");
         let replication_slot = self
             .postgres_connection
             .find_replication_slot_by_name(&self.postgres_config.get_replication_slot_name())

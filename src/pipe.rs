@@ -1,5 +1,4 @@
 use crate::{command, exporters, interface::IExporter};
-use log::{error, info};
 
 pub async fn run_postgres_pipe(config_options: &command::run::ConfigOptions) {
     let config = config_options
@@ -23,13 +22,13 @@ pub async fn run_postgres_pipe(config_options: &command::run::ConfigOptions) {
     let postgres_pipe = new_pipe(exporter).await;
 
     if let Err(error) = postgres_pipe.exporter.ping().await {
-        error!("Failed to ping Postgres exporter: {:?}", error);
+        log::error!("Failed to ping Postgres exporter: {:?}", error);
         return;
     }
 
     tokio::select! {
         _ = postgres_pipe.run_pipe() => {
-            info!("Postgres exporter running.");
+            log::info!("Postgres exporter running.");
         }
     }
 }
