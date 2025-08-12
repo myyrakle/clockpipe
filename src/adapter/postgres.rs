@@ -420,17 +420,12 @@ impl PostgresConnection {
             replication_slot_name, lsn
         );
 
-        sqlx::query_as::<_, (String,)>(&query)
-            .bind(replication_slot_name)
-            .bind(lsn)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| {
-                errors::Errors::ReplicationSlotAdvanceFailed(format!(
-                    "Failed to advance replication slot: {}",
-                    e
-                ))
-            })?;
+        sqlx::query(&query).execute(&self.pool).await.map_err(|e| {
+            errors::Errors::ReplicationSlotAdvanceFailed(format!(
+                "Failed to advance replication slot: {}",
+                e
+            ))
+        })?;
 
         Ok(())
     }

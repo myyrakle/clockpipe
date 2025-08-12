@@ -1,3 +1,5 @@
+use serde::de;
+
 use crate::{
     adapter::{
         self,
@@ -365,8 +367,28 @@ impl PostgresPipe {
                         }
                     }
                     MessageType::Delete => {
-                        println!("relation ID {}", parsed_row.relation_id);
-                        println!("payload {:?}", parsed_row.payload);
+                        let delete_query = self.generate_delete_query(
+                            &schema_name,
+                            &table_name,
+                            &PostgresCopyRow {
+                                columns: parsed_row.payload,
+                            },
+                        );
+
+                        if let Err(error) = self
+                            .clickhouse_connection
+                            .execute_query(&delete_query)
+                            .await
+                        {
+                            log::error!(
+                                "Failed to execute delete query for {}.{}: {}",
+                                schema_name,
+                                table_name,
+                                error
+                            );
+                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                            continue;
+                        }
                     }
                     _ => {}
                 }
@@ -453,6 +475,47 @@ impl PostgresPipe {
         insert_query.push_str(values.join(", ").as_str());
 
         insert_query
+    }
+
+    fn generate_delete_query(
+        &self,
+        schema_name: &str,
+        table_name: &str,
+        row: &PostgresCopyRow,
+    ) -> String {
+        if row.columns.is_empty() {
+            return String::new();
+        }
+
+        let mut delete_query = format!(
+            "ALTER TABLE {}.{table_name} DELETE WHERE ",
+            self.clickhouse_config.connection.database
+        );
+
+        let table_info = self
+            .context
+            .tables_map
+            .get(&format!("{}.{}", schema_name, table_name))
+            .expect("Table info not found in context");
+
+        let mut conditions = vec![];
+
+        for (index, column) in table_info.clickhouse_columns.iter().enumerate() {
+            if !column.is_in_primary_key {
+                continue;
+            }
+
+            let value = row.columns[index].text_ref_or("");
+            conditions.push(format!(
+                "{} = '{}'",
+                column.column_name,
+                value.replace("'", "''")
+            ));
+        }
+
+        delete_query.push_str(&conditions.join(" AND "));
+
+        delete_query
     }
 }
 

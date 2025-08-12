@@ -81,6 +81,13 @@ impl PgOutputValue {
         matches!(self, PgOutputValue::Null)
     }
 
+    pub fn text_ref_or(&self, default: &'static str) -> &str {
+        match self {
+            PgOutputValue::Text(value) => value.as_str(),
+            _ => default,
+        }
+    }
+
     pub fn text_or(self, default: String) -> String {
         match self {
             PgOutputValue::Text(value) => value,
