@@ -43,36 +43,21 @@ impl ClickhouseColumn {
 
         match self.data_type.as_str() {
             "Int8" | "Int16" | "Int32" | "Int64" | "Nullable(Int8)" | "Nullable(Int16)"
-            | "Nullable(Int32)" | "Nullable(Int64)" => value.unwrap_or("0".to_string()),
+            | "Nullable(Int32)" | "Nullable(Int64)" => value.text_or("0".to_string()),
             "Float32" | "Float64" | "Nullable(Float32)" | "Nullable(Float64)" => {
-                value.unwrap_or("0.0".to_string())
+                value.text_or("0.0".to_string())
             }
             "String" | "Nullable(String)" => {
-                format!("'{}'", value.unwrap_or("''".to_string()).replace("'", "''"))
+                format!("'{}'", value.text_or("''".to_string()).replace("'", "''"))
             }
-            "Decimal" | "Nullable(Decimal)" => value.unwrap_or("0.0".to_string()),
+            "Decimal" | "Nullable(Decimal)" => value.text_or("0.0".to_string()),
             _ => {
                 if self.data_type.starts_with("Array") {
-                    format!(
-                        "[{}]",
-                        self.replace_array_brackets(&value.unwrap_or("".to_string()))
-                    )
+                    format!("[{}]", value.array_value().unwrap_or_default(),)
                 } else {
-                    value.unwrap_or("NULL".to_string())
+                    value.text_or("NULL".to_string())
                 }
             }
-        }
-    }
-
-    fn replace_array_brackets(&self, value: &str) -> String {
-        if self.data_type.starts_with("Array") {
-            if value.starts_with('{') && value.ends_with('}') {
-                value[1..value.len() - 1].to_string()
-            } else {
-                value.to_string()
-            }
-        } else {
-            value.to_string()
         }
     }
 }

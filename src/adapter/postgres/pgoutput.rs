@@ -81,7 +81,7 @@ impl PgOutputValue {
         matches!(self, PgOutputValue::Null)
     }
 
-    pub fn unwrap_or(self, default: String) -> String {
+    pub fn text_or(self, default: String) -> String {
         match self {
             PgOutputValue::Text(value) => value,
             _ => default,
@@ -90,7 +90,11 @@ impl PgOutputValue {
 
     pub fn array_value(&self) -> Option<String> {
         if let PgOutputValue::Text(value) = self {
-            Some(value.clone())
+            if value.starts_with('{') && value.ends_with('}') {
+                Some(value[1..value.len() - 1].to_string())
+            } else {
+                Some(value.to_string())
+            }
         } else {
             None
         }
