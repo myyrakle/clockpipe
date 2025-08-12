@@ -359,15 +359,19 @@ impl PostgresConnection {
         replication_slot_name: &str,
         limit: i64, // recommendation: 65536
     ) -> errors::Result<Vec<PeekWalChangeResult>> {
+        println!(
+            "Peeking WAL changes for publication: {}, slot: {}, limit: {}",
+            publication_name, replication_slot_name, limit
+        );
+
         let rows: Vec<PeekWalChangeResult> = sqlx::query_as(
-            r#"
-                SELECT lsn, xid, data 
-		        FROM pg_logical_slot_peek_binary_changes($1, NULL, $2, 'proto_version', '1', 'publication_names', $3)
+            format!(r#"
+                SELECT lsn::text as lsn, xid::text, data 
+		        FROM pg_logical_slot_peek_binary_changes('{replication_slot_name}', NULL, {limit}, 'proto_version', '1', 'publication_names', '{publication_name}')
             "#,
         )
-        .bind(replication_slot_name)
-        .bind(limit)
-        .bind(publication_name)
+        .as_str(),
+        )
         .fetch_all(&self.pool)
         .await
         .map_err(|e| {

@@ -110,7 +110,7 @@ pub fn parse_pg_output(bytes: &[u8]) -> errors::Result<Option<PgOutput>> {
 }
 
 fn parse_pg_output_write(message_type: MessageType, bytes: &[u8]) -> errors::Result<PgOutput> {
-    let mut cursor = std::io::Cursor::new(bytes);
+    let mut cursor = std::io::Cursor::new(&bytes[1..]); // Skip the first byte (message type)
 
     let mut pg_output = PgOutput {
         message_type,
@@ -119,30 +119,67 @@ fn parse_pg_output_write(message_type: MessageType, bytes: &[u8]) -> errors::Res
         payload: Vec::new(),
     };
 
-    // Read relation ID
+    // Read relation ID (4 bytes)
     pg_output.relation_id = cursor.read_u32::<byteorder::BigEndian>().map_err(|e| {
         errors::Errors::PgOutputParseError(format!("Failed to read relation ID: {}", e))
     })?;
 
-    // Read tuple type
-    let tuple_type_byte = cursor.read_u8().map_err(|e| {
-        errors::Errors::PgOutputParseError(format!("Failed to read tuple type: {}", e))
-    })?;
+    match message_type {
+        MessageType::Insert => {
+            // Insert: relation_id + 'N' + tuple_data
+            let tuple_type_byte = cursor.read_u8().map_err(|e| {
+                errors::Errors::PgOutputParseError(format!("Failed to read tuple type: {}", e))
+            })?;
 
-    pg_output.tuple_type =
-        Some(PgTupleType::try_from(tuple_type_byte).map_err(|e| {
-            errors::Errors::PgOutputParseError(format!("Invalid tuple type: {}", e))
-        })?);
+            pg_output.tuple_type = Some(PgTupleType::try_from(tuple_type_byte).map_err(|e| {
+                errors::Errors::PgOutputParseError(format!("Invalid tuple type: {}", e))
+            })?);
+        }
+        MessageType::Update => {
+            // Update: relation_id + ('K'|'O'|'N') + tuple_data
+            let tuple_type_byte = cursor.read_u8().map_err(|e| {
+                errors::Errors::PgOutputParseError(format!("Failed to read tuple type: {}", e))
+            })?;
 
-    // Read column count
+            pg_output.tuple_type = Some(PgTupleType::try_from(tuple_type_byte).map_err(|e| {
+                errors::Errors::PgOutputParseError(format!("Invalid tuple type: {}", e))
+            })?);
+        }
+        MessageType::Delete => {
+            // Delete: relation_id + ('K'|'O') + tuple_data
+            let tuple_type_byte = cursor.read_u8().map_err(|e| {
+                errors::Errors::PgOutputParseError(format!("Failed to read tuple type: {}", e))
+            })?;
+
+            pg_output.tuple_type = Some(PgTupleType::try_from(tuple_type_byte).map_err(|e| {
+                errors::Errors::PgOutputParseError(format!("Invalid tuple type: {}", e))
+            })?);
+        }
+        MessageType::Truncate => {
+            // Truncate: relation_id + flags + no tuple data
+            let _flags = cursor.read_u8().map_err(|e| {
+                errors::Errors::PgOutputParseError(format!("Failed to read truncate flags: {}", e))
+            })?;
+            // No tuple data for truncate
+            return Ok(pg_output);
+        }
+        _ => {
+            return Err(errors::Errors::PgOutputParseError(format!(
+                "Unexpected message type for write operation: {:?}",
+                message_type
+            )));
+        }
+    }
+
+    // Read column count (2 bytes)
     let column_count = cursor.read_u16::<byteorder::BigEndian>().map_err(|e| {
         errors::Errors::PgOutputParseError(format!("Failed to read column count: {}", e))
     })? as usize;
 
-    pg_output.payload = vec![PgOutputValue::Unit; column_count as usize];
+    pg_output.payload = Vec::with_capacity(column_count);
 
     // Parse columns
-    for i in 0..column_count {
+    for _i in 0..column_count {
         let column_type = cursor.read_u8().map_err(|e| {
             errors::Errors::PgOutputParseError(format!("Failed to read column type: {}", e))
         })?;
@@ -150,11 +187,11 @@ fn parse_pg_output_write(message_type: MessageType, bytes: &[u8]) -> errors::Res
         match column_type {
             b'n' => {
                 // NULL value
-                pg_output.payload[i] = PgOutputValue::Null;
+                pg_output.payload.push(PgOutputValue::Null);
             }
             b'u' => {
                 // UNCHANGED value (for UPDATE) - skip
-                pg_output.payload[i] = PgOutputValue::Unchanged;
+                pg_output.payload.push(PgOutputValue::Unchanged);
             }
             b't' => {
                 // Text value
@@ -172,7 +209,7 @@ fn parse_pg_output_write(message_type: MessageType, bytes: &[u8]) -> errors::Res
                     errors::Errors::PgOutputParseError(format!("Invalid UTF-8 sequence: {}", e))
                 })?;
 
-                pg_output.payload[i] = PgOutputValue::Text(text_value);
+                pg_output.payload.push(PgOutputValue::Text(text_value));
             }
             b'b' => {
                 // Binary value
@@ -192,12 +229,12 @@ fn parse_pg_output_write(message_type: MessageType, bytes: &[u8]) -> errors::Res
                     ))
                 })?;
 
-                pg_output.payload[i] = PgOutputValue::Binary(buffer);
+                pg_output.payload.push(PgOutputValue::Binary(buffer));
             }
             _ => {
                 return Err(errors::Errors::PgOutputParseError(format!(
-                    "Unknown column type: {}",
-                    column_type
+                    "Unknown column type: {} (0x{:02x})",
+                    column_type as char, column_type
                 )));
             }
         }

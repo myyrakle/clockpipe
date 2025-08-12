@@ -3,12 +3,14 @@ use crate::{
         self,
         clickhouse::ClickhouseColumn,
         postgres::{
-            PostgresColumn, PostgresCopyRow, mapper::generate_clickhouse_create_table_query,
+            PostgresColumn, PostgresCopyRow,
+            mapper::generate_clickhouse_create_table_query,
+            pgoutput::{MessageType, parse_pg_output},
         },
     },
     command,
     errors::Errors,
-    interface::{IPipe, PeekResult},
+    interface::IPipe,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -282,35 +284,60 @@ impl PostgresPipe {
 
 impl PostgresPipe {
     async fn sync_loop(&self) {
+        let publication_name = self.postgres_config.get_publication_name();
+        let replication_slot_name = self.postgres_config.get_replication_slot_name();
+
         loop {
-            // Peek new rows
-            let peek_result = self.peek().await;
+            // 1. Peek new rows
+            let peek_result = self
+                .postgres_connection
+                .peek_wal_changes(&publication_name, &replication_slot_name, 65536)
+                .await;
 
             let peek_result = match peek_result {
                 Ok(peek) => peek,
                 Err(e) => {
-                    log::error!("Error peeking: {:?}", e);
+                    // 1.1. Handle peek error. wait and retry
+                    log::error!("Error peeking WAL changes: {:?}", e);
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     continue;
                 }
             };
 
-            // Handle peek result
-            // ...
+            // parse peeked rows
+
+            for row in peek_result.iter() {
+                let Some(parsed_row) =
+                    parse_pg_output(&row.data).expect("Failed to parse PgOutput")
+                else {
+                    continue;
+                };
+
+                match parsed_row.message_type {
+                    MessageType::Insert | MessageType::Update => {
+                        println!("relation ID {}", parsed_row.relation_id);
+                        println!("payload {:?}", parsed_row.payload);
+                    }
+                    MessageType::Delete => {
+                        println!("relation ID {}", parsed_row.relation_id);
+                        println!("payload {:?}", parsed_row.payload);
+                    }
+                    _ => {}
+                }
+            }
+
+            panic!("done")
 
             // Advance the exporter
-            if let Err(e) = self.advance(&peek_result.advance_key).await {
-                log::error!("Error advancing exporter: {:?}", e);
-                continue;
-            }
+            // if !peek_result.is_empty() {
+            //     let advance_key = &peek_result.last().unwrap().lsn;
+
+            //     if let Err(e) = self.advance(advance_key).await {
+            //         log::error!("Error advancing exporter: {:?}", e);
+            //         continue;
+            //     }
+            // }
         }
-    }
-
-    async fn peek(&self) -> Result<PeekResult, Errors> {
-        unimplemented!("Postgres peek not implemented yet");
-    }
-
-    async fn advance(&self, _key: &str) -> Result<(), Errors> {
-        unimplemented!("Postgres advance not implemented yet");
     }
 }
 
