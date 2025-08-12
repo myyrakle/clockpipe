@@ -7,6 +7,7 @@ use crate::{config::PostgresConnectionConfig, errors};
 #[derive(Debug, Clone)]
 pub struct PostgresConnection {
     pool: sqlx::Pool<sqlx::Postgres>,
+    config: PostgresConnectionConfig,
 }
 
 impl PostgresConnection {
@@ -30,7 +31,10 @@ impl PostgresConnection {
             Ok(pool) => {
                 log::info!("Successfully connected to Postgres database");
 
-                Ok(PostgresConnection { pool })
+                Ok(PostgresConnection {
+                    pool,
+                    config: config.clone(),
+                })
             }
             Err(e) => {
                 return Err(errors::Errors::DatabaseConnectionError(format!(
@@ -153,6 +157,11 @@ pub struct PostgresColumnType {
     pub nullable: bool,
     pub is_primary_key: bool,
     pub comment: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PostgresCopyRow {
+    pub columns: Vec<Option<String>>,
 }
 
 impl PostgresConnection {
@@ -386,5 +395,105 @@ impl PostgresConnection {
             })?;
 
         Ok(())
+    }
+
+    /// COPY TO STDOUT을 사용하여 테이블 데이터를 바이트로 다운로드
+    pub async fn copy_table_to_stdout(
+        &self,
+        table_name: &str,
+    ) -> errors::Result<Vec<PostgresCopyRow>> {
+        let query = format!("COPY (SELECT * FROM {table_name}) TO STDOUT");
+
+        log::debug!("Executing COPY TO STDOUT query: {}", query);
+
+        let connection_string = self.config.connection_string();
+
+        // tokio-postgres를 사용하여 COPY TO STDOUT 실행
+        let (client, connection) =
+            tokio_postgres::connect(connection_string.as_str(), tokio_postgres::NoTls)
+                .await
+                .map_err(|e| {
+                    errors::Errors::CopyTableFailed(format!(
+                        "Failed to connect to PostgreSQL for COPY: {}",
+                        e
+                    ))
+                })?;
+
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                eprintln!("Connection error: {}", e);
+            }
+        });
+
+        // COPY TO STDOUT 실행
+        let copy_sink = client.copy_out(&query).await.map_err(|e| {
+            errors::Errors::CopyTableFailed(format!(
+                "Failed to start COPY TO STDOUT for table {}: {}",
+                table_name, e
+            ))
+        })?;
+
+        // 스트림에서 모든 데이터 수집
+        use futures::StreamExt;
+        let mut result_data = Vec::new();
+
+        let mut stream = Box::pin(copy_sink);
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(bytes) => result_data.extend_from_slice(&bytes),
+                Err(e) => {
+                    return Err(errors::Errors::CopyTableFailed(format!(
+                        "Error reading COPY data: {}",
+                        e
+                    )));
+                }
+            }
+        }
+
+        log::info!(
+            "Successfully executed COPY TO STDOUT for table {} ({} bytes)",
+            table_name,
+            result_data.len()
+        );
+
+        let text = String::from_utf8(result_data.clone()).map_err(|e| {
+            errors::Errors::CopyTableFailed(format!("Failed to convert bytes to string: {}", e))
+        })?;
+
+        let mut rows = Vec::new();
+
+        let mut current_row = PostgresCopyRow {
+            columns: Vec::new(),
+        };
+        let mut current_word = String::new();
+        for c in text.chars() {
+            // column separator
+            if c == '\t' {
+                if current_word == "\\N" {
+                    current_row.columns.push(None);
+                    current_word.clear();
+                } else {
+                    current_row
+                        .columns
+                        .push(Some(std::mem::take(&mut current_word)));
+                }
+                continue;
+            }
+
+            // row separator
+            if c == '\n' {
+                if !current_word.is_empty() {
+                    current_row.columns.push(Some(current_word));
+                    current_word = String::new();
+                }
+
+                rows.push(std::mem::take(&mut current_row));
+                continue;
+            }
+
+            current_word.push(c);
+        }
+
+        Ok(rows)
     }
 }

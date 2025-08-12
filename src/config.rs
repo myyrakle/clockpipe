@@ -55,6 +55,15 @@ pub struct PostgresConnectionConfig {
     pub database: String,
 }
 
+impl PostgresConnectionConfig {
+    pub fn connection_string(&self) -> String {
+        format!(
+            "postgres://{}:{}@{}:{}/{}",
+            self.username, self.password, self.host, self.port, self.database
+        )
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PostgresSource {
     pub schema_name: String,

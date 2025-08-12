@@ -16,6 +16,7 @@ pub enum Errors {
     PeekWalChangesFailed(String),
     ReplicationSlotAdvanceFailed(String),
     PgOutputParseError(String),
+    CopyTableFailed(String),
 }
 
 pub type Result<T> = std::result::Result<T, Errors>;
@@ -55,6 +56,7 @@ impl std::fmt::Display for Errors {
                 write!(f, "Failed to list table columns: {}", msg)
             }
             Errors::ClickhouseDatabaseError(msg) => write!(f, "ClickHouse database error: {}", msg),
+            Errors::CopyTableFailed(msg) => write!(f, "Failed to copy table data: {}", msg),
         }
     }
 }
