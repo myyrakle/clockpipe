@@ -90,4 +90,30 @@ impl ClickhouseConnection {
 
         Ok(())
     }
+
+    pub async fn exists_table(
+        &self,
+        database_name: &str,
+        table_name: &str,
+    ) -> errors::Result<bool> {
+        let query = r#"
+            select exists(select 1 from system.tables where name = ? and database = ?) as exists;
+        "#;
+
+        let exists: bool = self
+            .client
+            .query(query)
+            .bind(table_name)
+            .bind(database_name)
+            .fetch_one()
+            .await
+            .map_err(|e| {
+                crate::errors::Errors::TableNotFoundError(format!(
+                    "Failed to check if table exists: {}",
+                    e
+                ))
+            })?;
+
+        Ok(exists)
+    }
 }
