@@ -2,7 +2,7 @@ use sqlx::postgres::PgConnectOptions;
 pub mod mapper;
 pub mod pgoutput;
 
-use crate::{config::PostgresConnectionConfig, errors};
+use crate::{adapter::postgres::pgoutput::PgOutputValue, config::PostgresConnectionConfig, errors};
 
 #[derive(Debug, Clone)]
 pub struct PostgresConnection {
@@ -161,7 +161,7 @@ pub struct PostgresColumn {
 
 #[derive(Debug, Clone, Default)]
 pub struct PostgresCopyRow {
-    pub columns: Vec<Option<String>>,
+    pub columns: Vec<PgOutputValue>,
 }
 
 impl PostgresConnection {
@@ -475,12 +475,12 @@ impl PostgresConnection {
             // column separator
             if c == '\t' {
                 if current_word == "\\N" {
-                    current_row.columns.push(None);
+                    current_row.columns.push(PgOutputValue::Null);
                     current_word.clear();
                 } else {
                     current_row
                         .columns
-                        .push(Some(std::mem::take(&mut current_word)));
+                        .push(PgOutputValue::Text(std::mem::take(&mut current_word)));
                 }
                 continue;
             }
@@ -488,11 +488,12 @@ impl PostgresConnection {
             // row separator
             if c == '\n' {
                 if current_word == "\\N" {
-                    current_row.columns.push(None);
+                    current_row.columns.push(PgOutputValue::Null);
                     current_word.clear();
                 } else if !current_word.is_empty() {
-                    current_row.columns.push(Some(current_word));
-                    current_word = String::new();
+                    current_row
+                        .columns
+                        .push(PgOutputValue::Text(std::mem::take(&mut current_word)));
                 }
 
                 rows.push(std::mem::take(&mut current_row));

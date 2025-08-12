@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::errors;
+use crate::{adapter::postgres::pgoutput::PgOutputValue, errors};
 
 #[derive(Clone)]
 pub struct ClickhouseConnection {
@@ -36,8 +36,8 @@ impl ClickhouseColumn {
         }
     }
 
-    pub fn value(&self, value: Option<String>) -> String {
-        if value.is_none() & self.data_type.starts_with("Nullable") {
+    pub fn value(&self, value: PgOutputValue) -> String {
+        if value.is_null() & self.data_type.starts_with("Nullable") {
             return "NULL".to_string();
         }
 
@@ -55,9 +55,7 @@ impl ClickhouseColumn {
                 if self.data_type.starts_with("Array") {
                     format!(
                         "[{}]",
-                        value
-                            .map(|e| self.replace_array_brackets(&e))
-                            .unwrap_or("".to_string())
+                        self.replace_array_brackets(&value.unwrap_or("".to_string()))
                     )
                 } else {
                     value.unwrap_or("NULL".to_string())

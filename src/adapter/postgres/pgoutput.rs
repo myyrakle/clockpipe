@@ -76,6 +76,27 @@ pub enum PgOutputValue {
     Binary(Vec<u8>),
 }
 
+impl PgOutputValue {
+    pub fn is_null(&self) -> bool {
+        matches!(self, PgOutputValue::Null)
+    }
+
+    pub fn unwrap_or(self, default: String) -> String {
+        match self {
+            PgOutputValue::Text(value) => value,
+            _ => default,
+        }
+    }
+
+    pub fn array_value(&self) -> Option<String> {
+        if let PgOutputValue::Text(value) = self {
+            Some(value.clone())
+        } else {
+            None
+        }
+    }
+}
+
 pub fn parse_pg_output(bytes: &[u8]) -> errors::Result<Option<PgOutput>> {
     let first_byte = bytes.get(0).cloned().unwrap_or(0);
     let message_type =
