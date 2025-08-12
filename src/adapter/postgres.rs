@@ -415,10 +415,15 @@ impl PostgresConnection {
         replication_slot_name: &str,
         lsn: &str,
     ) -> errors::Result<()> {
-        sqlx::query("SELECT pg_logical_slot_advance($1, $2);")
+        let query = format!(
+            "SELECT pg_replication_slot_advance('{}', '{}');",
+            replication_slot_name, lsn
+        );
+
+        sqlx::query_as::<_, (String,)>(&query)
             .bind(replication_slot_name)
             .bind(lsn)
-            .execute(&self.pool)
+            .fetch_all(&self.pool)
             .await
             .map_err(|e| {
                 errors::Errors::ReplicationSlotAdvanceFailed(format!(

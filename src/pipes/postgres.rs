@@ -316,6 +316,12 @@ impl PostgresPipe {
 
             // parse peeked rows
 
+            if peek_result.is_empty() {
+                log::info!("No new changes found, waiting for next iteration...");
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                continue;
+            }
+
             for row in peek_result.iter() {
                 let Some(parsed_row) =
                     parse_pg_output(&row.data).expect("Failed to parse PgOutput")
@@ -366,17 +372,19 @@ impl PostgresPipe {
                 }
             }
 
-            panic!("done")
-
             // Advance the exporter
-            // if !peek_result.is_empty() {
-            //     let advance_key = &peek_result.last().unwrap().lsn;
+            if !peek_result.is_empty() {
+                let advance_key = &peek_result.last().unwrap().lsn;
 
-            //     if let Err(e) = self.advance(advance_key).await {
-            //         log::error!("Error advancing exporter: {:?}", e);
-            //         continue;
-            //     }
-            // }
+                if let Err(e) = self
+                    .postgres_connection
+                    .advance_replication_slot(&replication_slot_name, advance_key)
+                    .await
+                {
+                    log::error!("Error advancing exporter: {:?}", e);
+                    continue;
+                }
+            }
         }
     }
 }
