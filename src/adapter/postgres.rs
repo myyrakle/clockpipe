@@ -14,7 +14,7 @@ impl PostgresConnection {
     pub async fn new(config: &PostgresConnectionConfig) -> errors::Result<Self> {
         let mut options = PgConnectOptions::new()
             .host(&config.host)
-            .port(config.port as u16)
+            .port(config.port)
             .username(&config.username)
             .database(&config.database);
 
@@ -37,10 +37,9 @@ impl PostgresConnection {
                 })
             }
             Err(e) => {
-                return Err(errors::Errors::DatabaseConnectionError(format!(
-                    "Failed to connect to Postgres database: {}",
-                    e
-                )));
+                Err(errors::Errors::DatabaseConnectionError(format!(
+                    "Failed to connect to Postgres database: {e}"
+                )))
             }
         }
     }
@@ -51,8 +50,7 @@ impl PostgresConnection {
         match result {
             Ok(_) => Ok(()),
             Err(e) => Err(errors::Errors::DatabasePingError(format!(
-                "Failed to ping Postgres database: {}",
-                e
+                "Failed to ping Postgres database: {e}"
             ))),
         }
     }
@@ -89,15 +87,13 @@ impl PostgresConnection {
                 .await
                 .map_err(|e| {
                     errors::Errors::TableNotFoundError(format!(
-                        "Failed to get table name by relation ID: {}",
-                        e
+                        "Failed to get table name by relation ID: {e}"
                     ))
                 })?;
 
         if result.is_empty() {
             return Err(errors::Errors::TableNotFoundError(format!(
-                "No table found for relation ID: {}",
-                relation_id
+                "No table found for relation ID: {relation_id}"
             )));
         }
 
@@ -118,15 +114,13 @@ impl PostgresConnection {
         .await
         .map_err(|e| {
             errors::Errors::TableNotFoundError(format!(
-                "Failed to get relation ID for table {}.{}: {}",
-                schema_name, table_name, e
+                "Failed to get relation ID for table {schema_name}.{table_name}: {e}"
             ))
         })?;
 
         if result.is_empty() {
             return Err(errors::Errors::TableNotFoundError(format!(
-                "No table found for {}.{}",
-                schema_name, table_name
+                "No table found for {schema_name}.{table_name}"
             )));
         }
 
@@ -157,8 +151,7 @@ impl PostgresConnection {
         .await
         .map_err(|e| {
             errors::Errors::GetTableNameFailed(format!(
-                "Failed to get columns for relation ID: {}",
-                e
+                "Failed to get columns for relation ID: {e}"
             ))
         })?;
 
@@ -205,8 +198,7 @@ impl PostgresConnection {
                 .await
                 .map_err(|e| {
                     errors::Errors::PublicationFindFailed(format!(
-                        "Failed to find publication by name: {}",
-                        e
+                        "Failed to find publication by name: {e}"
                     ))
                 })?;
 
@@ -229,8 +221,7 @@ impl PostgresConnection {
         .await
         .map_err(|e| {
             errors::Errors::PublicationFindFailed(format!(
-                "Failed to get publication tables: {}",
-                e
+                "Failed to get publication tables: {e}"
             ))
         })?;
 
@@ -243,9 +234,7 @@ impl PostgresConnection {
         table_names: &[String],
     ) -> errors::Result<()> {
         log::debug!(
-            "Creating publication {} for tables: {:?}",
-            publication_name,
-            table_names
+            "Creating publication {publication_name} for tables: {table_names:?}"
         );
 
         let query = format!(
@@ -255,10 +244,10 @@ impl PostgresConnection {
         );
 
         sqlx::query(&query).execute(&self.pool).await.map_err(|e| {
-            errors::Errors::PublicationCreateFailed(format!("Failed to create publication: {}", e))
+            errors::Errors::PublicationCreateFailed(format!("Failed to create publication: {e}"))
         })?;
 
-        log::info!("Successfully created publication {}", publication_name);
+        log::info!("Successfully created publication {publication_name}");
 
         Ok(())
     }
@@ -276,8 +265,7 @@ impl PostgresConnection {
 
         sqlx::query(&query).execute(&self.pool).await.map_err(|e| {
             errors::Errors::PublicationAddFailed(format!(
-                "Failed to add table to publication: {}",
-                e
+                "Failed to add table to publication: {e}"
             ))
         })?;
 
@@ -285,7 +273,7 @@ impl PostgresConnection {
     }
 
     pub async fn create_replication_slot(&self, slot_name: &str) -> errors::Result<()> {
-        log::debug!("Creating replication slot: {}", slot_name);
+        log::debug!("Creating replication slot: {slot_name}");
 
         sqlx::query("SELECT pg_create_logical_replication_slot($1, 'pgoutput');")
             .bind(slot_name)
@@ -293,12 +281,11 @@ impl PostgresConnection {
             .await
             .map_err(|e| {
                 errors::Errors::ReplicationCreateFailed(format!(
-                    "Failed to create replication slot: {}",
-                    e
+                    "Failed to create replication slot: {e}"
                 ))
             })?;
 
-        log::info!("Successfully created replication slot {}", slot_name);
+        log::info!("Successfully created replication slot {slot_name}");
 
         Ok(())
     }
@@ -315,8 +302,7 @@ impl PostgresConnection {
         .await
         .map_err(|e| {
             errors::Errors::ReplicationCreateFailed(format!(
-                "Failed to create replication slot: {}",
-                e
+                "Failed to create replication slot: {e}"
             ))
         })?;
 
@@ -332,8 +318,7 @@ impl PostgresConnection {
         database_name: &str,
         table_name: &str,
     ) -> errors::Result<Vec<PostgresColumn>> {
-        let query = format!(
-            r#"
+        let query = r#"
              SELECT 
                 c.ordinal_position as column_index,
                 c.column_name as column_name,
@@ -367,8 +352,7 @@ impl PostgresConnection {
                     WHERE relname = c.table_name
                 )
             WHERE c.table_name = $1 AND c.table_schema = $2
-        "#
-        );
+        "#.to_string();
 
         let rows: Vec<PostgresColumn> = sqlx::query_as(&query)
             .bind(table_name)
@@ -376,7 +360,7 @@ impl PostgresConnection {
             .fetch_all(&self.pool)
             .await
             .map_err(|e| {
-                errors::Errors::ListTableColumnsFailed(format!("Failed to get columns: {}", e))
+                errors::Errors::ListTableColumnsFailed(format!("Failed to get columns: {e}"))
             })?;
 
         Ok(rows)
@@ -389,8 +373,7 @@ impl PostgresConnection {
         limit: i64, // recommendation: 65536
     ) -> errors::Result<Vec<PeekWalChangeResult>> {
         println!(
-            "Peeking WAL changes for publication: {}, slot: {}, limit: {}",
-            publication_name, replication_slot_name, limit
+            "Peeking WAL changes for publication: {publication_name}, slot: {replication_slot_name}, limit: {limit}"
         );
 
         let rows: Vec<PeekWalChangeResult> = sqlx::query_as(
@@ -404,7 +387,7 @@ impl PostgresConnection {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| {
-            errors::Errors::PeekWalChangesFailed(format!("Failed to peek WAL changes: {}", e))
+            errors::Errors::PeekWalChangesFailed(format!("Failed to peek WAL changes: {e}"))
         })?;
 
         Ok(rows)
@@ -416,14 +399,12 @@ impl PostgresConnection {
         lsn: &str,
     ) -> errors::Result<()> {
         let query = format!(
-            "SELECT pg_replication_slot_advance('{}', '{}');",
-            replication_slot_name, lsn
+            "SELECT pg_replication_slot_advance('{replication_slot_name}', '{lsn}');"
         );
 
         sqlx::query(&query).execute(&self.pool).await.map_err(|e| {
             errors::Errors::ReplicationSlotAdvanceFailed(format!(
-                "Failed to advance replication slot: {}",
-                e
+                "Failed to advance replication slot: {e}"
             ))
         })?;
 
@@ -438,7 +419,7 @@ impl PostgresConnection {
     ) -> errors::Result<Vec<PostgresCopyRow>> {
         let query = format!("COPY (SELECT * FROM {schema_name}.{table_name}) TO STDOUT");
 
-        log::debug!("Executing COPY TO STDOUT query: {}", query);
+        log::debug!("Executing COPY TO STDOUT query: {query}");
 
         let connection_string = self.config.connection_string();
 
@@ -448,22 +429,20 @@ impl PostgresConnection {
                 .await
                 .map_err(|e| {
                     errors::Errors::CopyTableFailed(format!(
-                        "Failed to connect to PostgreSQL for COPY: {}",
-                        e
+                        "Failed to connect to PostgreSQL for COPY: {e}"
                     ))
                 })?;
 
         tokio::spawn(async move {
             if let Err(e) = connection.await {
-                eprintln!("Connection error: {}", e);
+                eprintln!("Connection error: {e}");
             }
         });
 
         // COPY TO STDOUT 실행
         let copy_sink = client.copy_out(&query).await.map_err(|e| {
             errors::Errors::CopyTableFailed(format!(
-                "Failed to start COPY TO STDOUT for table {}: {}",
-                table_name, e
+                "Failed to start COPY TO STDOUT for table {table_name}: {e}"
             ))
         })?;
 
@@ -477,8 +456,7 @@ impl PostgresConnection {
                 Ok(bytes) => result_data.extend_from_slice(&bytes),
                 Err(e) => {
                     return Err(errors::Errors::CopyTableFailed(format!(
-                        "Error reading COPY data: {}",
-                        e
+                        "Error reading COPY data: {e}"
                     )));
                 }
             }
@@ -491,7 +469,7 @@ impl PostgresConnection {
         );
 
         let text = String::from_utf8(result_data.clone()).map_err(|e| {
-            errors::Errors::CopyTableFailed(format!("Failed to convert bytes to string: {}", e))
+            errors::Errors::CopyTableFailed(format!("Failed to convert bytes to string: {e}"))
         })?;
 
         let mut rows = Vec::new();

@@ -27,8 +27,6 @@ impl ClickhouseColumn {
             _ => {
                 if self.data_type.starts_with("Array") {
                     "[]".to_string()
-                } else if self.data_type.starts_with("Nullable") {
-                    "NULL".to_string()
                 } else {
                     "NULL".to_string() // Default for unknown types
                 }
@@ -85,10 +83,7 @@ impl ClickhouseConnection {
             .fetch_one::<u8>()
             .await
             .map_err(|e| {
-                crate::errors::Errors::DatabasePingError(format!(
-                    "Failed to ping ClickHouse: {}",
-                    e
-                ))
+                crate::errors::Errors::DatabasePingError(format!("Failed to ping ClickHouse: {e}"))
             })?;
 
         Ok(())
@@ -119,8 +114,7 @@ impl ClickhouseConnection {
             .await
             .map_err(|e| {
                 crate::errors::Errors::ListTableColumnsFailed(format!(
-                    "Failed to list columns for table {}: {}",
-                    table_name, e
+                    "Failed to list columns for table {table_name}: {e}"
                 ))
             })?;
 
@@ -129,10 +123,7 @@ impl ClickhouseConnection {
 
     pub async fn execute_query(&self, query: &str) -> errors::Result<()> {
         self.client.query(query).execute().await.map_err(|e| {
-            crate::errors::Errors::DatabaseConnectionError(format!(
-                "Failed to execute query: {}",
-                e
-            ))
+            crate::errors::Errors::DatabaseConnectionError(format!("Failed to execute query: {e}"))
         })?;
 
         Ok(())
@@ -152,8 +143,7 @@ impl ClickhouseConnection {
             .await
             .map_err(|e| {
                 crate::errors::Errors::TableNotFoundError(format!(
-                    "Failed to check if table exists: {}",
-                    e
+                    "Failed to check if table exists: {e}"
                 ))
             })?;
 
