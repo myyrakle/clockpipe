@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::errors;
+use crate::{adapter::postgres::pgoutput::PgOutputValue, errors};
 
 #[derive(Clone)]
 pub struct ClickhouseConnection {
@@ -27,8 +27,6 @@ impl ClickhouseColumn {
             _ => {
                 if self.data_type.starts_with("Array") {
                     "[]".to_string()
-                } else if self.data_type.starts_with("Nullable") {
-                    "NULL".to_string()
                 } else {
                     "NULL".to_string() // Default for unknown types
                 }
@@ -36,45 +34,28 @@ impl ClickhouseColumn {
         }
     }
 
-    pub fn value(&self, value: Option<String>) -> String {
-        if value.is_none() & self.data_type.starts_with("Nullable") {
+    pub fn value(&self, value: PgOutputValue) -> String {
+        if value.is_null() & self.data_type.starts_with("Nullable") {
             return "NULL".to_string();
         }
 
         match self.data_type.as_str() {
             "Int8" | "Int16" | "Int32" | "Int64" | "Nullable(Int8)" | "Nullable(Int16)"
-            | "Nullable(Int32)" | "Nullable(Int64)" => value.unwrap_or("0".to_string()),
+            | "Nullable(Int32)" | "Nullable(Int64)" => value.text_or("0".to_string()),
             "Float32" | "Float64" | "Nullable(Float32)" | "Nullable(Float64)" => {
-                value.unwrap_or("0.0".to_string())
+                value.text_or("0.0".to_string())
             }
             "String" | "Nullable(String)" => {
-                format!("'{}'", value.unwrap_or("''".to_string()).replace("'", "''"))
+                format!("'{}'", value.text_or("''".to_string()).replace("'", "''"))
             }
-            "Decimal" | "Nullable(Decimal)" => value.unwrap_or("0.0".to_string()),
+            "Decimal" | "Nullable(Decimal)" => value.text_or("0.0".to_string()),
             _ => {
                 if self.data_type.starts_with("Array") {
-                    format!(
-                        "[{}]",
-                        value
-                            .map(|e| self.replace_array_brackets(&e))
-                            .unwrap_or("".to_string())
-                    )
+                    format!("[{}]", value.array_value().unwrap_or_default(),)
                 } else {
-                    value.unwrap_or("NULL".to_string())
+                    value.text_or("NULL".to_string())
                 }
             }
-        }
-    }
-
-    fn replace_array_brackets(&self, value: &str) -> String {
-        if self.data_type.starts_with("Array") {
-            if value.starts_with('{') && value.ends_with('}') {
-                value[1..value.len() - 1].to_string()
-            } else {
-                value.to_string()
-            }
-        } else {
-            value.to_string()
         }
     }
 }
@@ -102,10 +83,7 @@ impl ClickhouseConnection {
             .fetch_one::<u8>()
             .await
             .map_err(|e| {
-                crate::errors::Errors::DatabasePingError(format!(
-                    "Failed to ping ClickHouse: {}",
-                    e
-                ))
+                crate::errors::Errors::DatabasePingError(format!("Failed to ping ClickHouse: {e}"))
             })?;
 
         Ok(())
@@ -136,8 +114,7 @@ impl ClickhouseConnection {
             .await
             .map_err(|e| {
                 crate::errors::Errors::ListTableColumnsFailed(format!(
-                    "Failed to list columns for table {}: {}",
-                    table_name, e
+                    "Failed to list columns for table {table_name}: {e}"
                 ))
             })?;
 
@@ -146,10 +123,7 @@ impl ClickhouseConnection {
 
     pub async fn execute_query(&self, query: &str) -> errors::Result<()> {
         self.client.query(query).execute().await.map_err(|e| {
-            crate::errors::Errors::DatabaseConnectionError(format!(
-                "Failed to execute query: {}",
-                e
-            ))
+            crate::errors::Errors::DatabaseConnectionError(format!("Failed to execute query: {e}"))
         })?;
 
         Ok(())
@@ -169,8 +143,7 @@ impl ClickhouseConnection {
             .await
             .map_err(|e| {
                 crate::errors::Errors::TableNotFoundError(format!(
-                    "Failed to check if table exists: {}",
-                    e
+                    "Failed to check if table exists: {e}"
                 ))
             })?;
 

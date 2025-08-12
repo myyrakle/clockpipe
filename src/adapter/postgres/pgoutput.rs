@@ -33,7 +33,7 @@ impl TryFrom<u8> for MessageType {
             b'U' => Ok(MessageType::Update),
             b'D' => Ok(MessageType::Delete),
             b'T' => Ok(MessageType::Truncate),
-            _ => Err(format!("Unknown message type: {}", value)),
+            _ => Err(format!("Unknown message type: {value}")),
         }
     }
 }
@@ -54,7 +54,7 @@ impl TryFrom<u8> for PgTupleType {
             b'N' => Ok(PgTupleType::New),
             b'K' => Ok(PgTupleType::Key),
             b'O' => Ok(PgTupleType::Old),
-            _ => Err(format!("Unknown tuple type: {}", value)),
+            _ => Err(format!("Unknown tuple type: {value}")),
         }
     }
 }
@@ -76,8 +76,40 @@ pub enum PgOutputValue {
     Binary(Vec<u8>),
 }
 
+impl PgOutputValue {
+    pub fn is_null(&self) -> bool {
+        matches!(self, PgOutputValue::Null)
+    }
+
+    pub fn text_ref_or(&self, default: &'static str) -> &str {
+        match self {
+            PgOutputValue::Text(value) => value.as_str(),
+            _ => default,
+        }
+    }
+
+    pub fn text_or(self, default: String) -> String {
+        match self {
+            PgOutputValue::Text(value) => value,
+            _ => default,
+        }
+    }
+
+    pub fn array_value(&self) -> Option<String> {
+        if let PgOutputValue::Text(value) = self {
+            if value.starts_with('{') && value.ends_with('}') {
+                Some(value[1..value.len() - 1].to_string())
+            } else {
+                Some(value.to_string())
+            }
+        } else {
+            None
+        }
+    }
+}
+
 pub fn parse_pg_output(bytes: &[u8]) -> errors::Result<Option<PgOutput>> {
-    let first_byte = bytes.get(0).cloned().unwrap_or(0);
+    let first_byte = bytes.first().cloned().unwrap_or(0);
     let message_type =
         MessageType::try_from(first_byte).expect("Failed to parse message type from bytes");
 
@@ -110,7 +142,7 @@ pub fn parse_pg_output(bytes: &[u8]) -> errors::Result<Option<PgOutput>> {
 }
 
 fn parse_pg_output_write(message_type: MessageType, bytes: &[u8]) -> errors::Result<PgOutput> {
-    let mut cursor = std::io::Cursor::new(bytes);
+    let mut cursor = std::io::Cursor::new(&bytes[1..]); // Skip the first byte (message type)
 
     let mut pg_output = PgOutput {
         message_type,
@@ -119,67 +151,102 @@ fn parse_pg_output_write(message_type: MessageType, bytes: &[u8]) -> errors::Res
         payload: Vec::new(),
     };
 
-    // Read relation ID
+    // Read relation ID (4 bytes)
     pg_output.relation_id = cursor.read_u32::<byteorder::BigEndian>().map_err(|e| {
-        errors::Errors::PgOutputParseError(format!("Failed to read relation ID: {}", e))
+        errors::Errors::PgOutputParseError(format!("Failed to read relation ID: {e}"))
     })?;
 
-    // Read tuple type
-    let tuple_type_byte = cursor.read_u8().map_err(|e| {
-        errors::Errors::PgOutputParseError(format!("Failed to read tuple type: {}", e))
-    })?;
+    match message_type {
+        MessageType::Insert => {
+            // Insert: relation_id + 'N' + tuple_data
+            let tuple_type_byte = cursor.read_u8().map_err(|e| {
+                errors::Errors::PgOutputParseError(format!("Failed to read tuple type: {e}"))
+            })?;
 
-    pg_output.tuple_type =
-        Some(PgTupleType::try_from(tuple_type_byte).map_err(|e| {
-            errors::Errors::PgOutputParseError(format!("Invalid tuple type: {}", e))
-        })?);
+            pg_output.tuple_type = Some(PgTupleType::try_from(tuple_type_byte).map_err(|e| {
+                errors::Errors::PgOutputParseError(format!("Invalid tuple type: {e}"))
+            })?);
+        }
+        MessageType::Update => {
+            // Update: relation_id + ('K'|'O'|'N') + tuple_data
+            let tuple_type_byte = cursor.read_u8().map_err(|e| {
+                errors::Errors::PgOutputParseError(format!("Failed to read tuple type: {e}"))
+            })?;
 
-    // Read column count
+            pg_output.tuple_type = Some(PgTupleType::try_from(tuple_type_byte).map_err(|e| {
+                errors::Errors::PgOutputParseError(format!("Invalid tuple type: {e}"))
+            })?);
+        }
+        MessageType::Delete => {
+            // Delete: relation_id + ('K'|'O') + tuple_data
+            let tuple_type_byte = cursor.read_u8().map_err(|e| {
+                errors::Errors::PgOutputParseError(format!("Failed to read tuple type: {e}"))
+            })?;
+
+            pg_output.tuple_type = Some(PgTupleType::try_from(tuple_type_byte).map_err(|e| {
+                errors::Errors::PgOutputParseError(format!("Invalid tuple type: {e}"))
+            })?);
+        }
+        MessageType::Truncate => {
+            // Truncate: relation_id + flags + no tuple data
+            let _flags = cursor.read_u8().map_err(|e| {
+                errors::Errors::PgOutputParseError(format!("Failed to read truncate flags: {e}"))
+            })?;
+            // No tuple data for truncate
+            return Ok(pg_output);
+        }
+        _ => {
+            return Err(errors::Errors::PgOutputParseError(format!(
+                "Unexpected message type for write operation: {message_type:?}"
+            )));
+        }
+    }
+
+    // Read column count (2 bytes)
     let column_count = cursor.read_u16::<byteorder::BigEndian>().map_err(|e| {
-        errors::Errors::PgOutputParseError(format!("Failed to read column count: {}", e))
+        errors::Errors::PgOutputParseError(format!("Failed to read column count: {e}"))
     })? as usize;
 
-    pg_output.payload = vec![PgOutputValue::Unit; column_count as usize];
+    pg_output.payload = Vec::with_capacity(column_count);
 
     // Parse columns
-    for i in 0..column_count {
+    for _i in 0..column_count {
         let column_type = cursor.read_u8().map_err(|e| {
-            errors::Errors::PgOutputParseError(format!("Failed to read column type: {}", e))
+            errors::Errors::PgOutputParseError(format!("Failed to read column type: {e}"))
         })?;
 
         match column_type {
             b'n' => {
                 // NULL value
-                pg_output.payload[i] = PgOutputValue::Null;
+                pg_output.payload.push(PgOutputValue::Null);
             }
             b'u' => {
                 // UNCHANGED value (for UPDATE) - skip
-                pg_output.payload[i] = PgOutputValue::Unchanged;
+                pg_output.payload.push(PgOutputValue::Unchanged);
             }
             b't' => {
                 // Text value
                 let length = cursor.read_u32::<byteorder::BigEndian>().map_err(|e| {
-                    errors::Errors::PgOutputParseError(format!("Failed to read text length: {}", e))
+                    errors::Errors::PgOutputParseError(format!("Failed to read text length: {e}"))
                 })?;
 
                 let mut buffer = vec![0u8; length as usize];
 
                 cursor.read_exact(&mut buffer).map_err(|e| {
-                    errors::Errors::PgOutputParseError(format!("Failed to read text value: {}", e))
+                    errors::Errors::PgOutputParseError(format!("Failed to read text value: {e}"))
                 })?;
 
                 let text_value = String::from_utf8(buffer).map_err(|e| {
-                    errors::Errors::PgOutputParseError(format!("Invalid UTF-8 sequence: {}", e))
+                    errors::Errors::PgOutputParseError(format!("Invalid UTF-8 sequence: {e}"))
                 })?;
 
-                pg_output.payload[i] = PgOutputValue::Text(text_value);
+                pg_output.payload.push(PgOutputValue::Text(text_value));
             }
             b'b' => {
                 // Binary value
                 let length = cursor.read_u32::<byteorder::BigEndian>().map_err(|e| {
                     errors::Errors::PgOutputParseError(format!(
-                        "Failed to read binary length: {}",
-                        e
+                        "Failed to read binary length: {e}"
                     ))
                 })?;
 
@@ -187,17 +254,16 @@ fn parse_pg_output_write(message_type: MessageType, bytes: &[u8]) -> errors::Res
 
                 cursor.read_exact(&mut buffer).map_err(|e| {
                     errors::Errors::PgOutputParseError(format!(
-                        "Failed to read binary value: {}",
-                        e
+                        "Failed to read binary value: {e}"
                     ))
                 })?;
 
-                pg_output.payload[i] = PgOutputValue::Binary(buffer);
+                pg_output.payload.push(PgOutputValue::Binary(buffer));
             }
             _ => {
                 return Err(errors::Errors::PgOutputParseError(format!(
-                    "Unknown column type: {}",
-                    column_type
+                    "Unknown column type: {} (0x{:02x})",
+                    column_type as char, column_type
                 )));
             }
         }

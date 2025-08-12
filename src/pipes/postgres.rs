@@ -3,17 +3,20 @@ use crate::{
         self,
         clickhouse::ClickhouseColumn,
         postgres::{
-            PostgresColumn, PostgresCopyRow, mapper::generate_clickhouse_create_table_query,
+            PostgresColumn, PostgresCopyRow,
+            mapper::generate_clickhouse_create_table_query,
+            pgoutput::{MessageType, parse_pg_output},
         },
     },
     command,
     errors::Errors,
-    interface::{IPipe, PeekResult},
+    interface::IPipe,
 };
 
 #[derive(Debug, Clone, Default)]
 pub struct PostgresPipeContext {
     pub tables_map: std::collections::HashMap<String, PostgresPipeTableInfo>,
+    pub table_relation_map: std::collections::HashMap<u32, (String, String)>,
 }
 
 impl PostgresPipeContext {
@@ -25,7 +28,7 @@ impl PostgresPipeContext {
         clickhouse_columns: Vec<ClickhouseColumn>,
     ) {
         self.tables_map.insert(
-            format!("{}.{}", schema_name, table_name),
+            format!("{schema_name}.{table_name}"),
             PostgresPipeTableInfo {
                 postgres_columns,
                 clickhouse_columns,
@@ -79,12 +82,12 @@ impl IPipe for PostgresPipe {
         self.postgres_connection
             .ping()
             .await
-            .map_err(|e| Errors::DatabasePingError(format!("Postgres ping failed: {}", e)))?;
+            .map_err(|e| Errors::DatabasePingError(format!("Postgres ping failed: {e}")))?;
 
         self.clickhouse_connection
             .ping()
             .await
-            .map_err(|e| Errors::DatabasePingError(format!("ClickHouse ping failed: {}", e)))?;
+            .map_err(|e| Errors::DatabasePingError(format!("ClickHouse ping failed: {e}")))?;
 
         log::info!("Postgres and ClickHouse connections are healthy.");
 
@@ -134,7 +137,7 @@ impl PostgresPipe {
                 ));
             }
 
-            log::info!("Source Tables: {:?}", source_tables);
+            log::info!("Source Tables: {source_tables:?}");
 
             log::info!("Create Publication");
             self.postgres_connection
@@ -160,7 +163,7 @@ impl PostgresPipe {
                 .iter()
                 .any(|t| t.table_name == table.table_name && t.schema_name == table.schema_name)
             {
-                log::info!("Adding table {} to publication", table_name);
+                log::info!("Adding table {table_name} to publication");
                 self.postgres_connection
                     .add_table_to_publication(
                         &self.postgres_config.get_publication_name(),
@@ -190,6 +193,11 @@ impl PostgresPipe {
         log::info!("Setting up table in ClickHouse...");
 
         for table in &self.postgres_config.tables {
+            let relation_id = self
+                .postgres_connection
+                .get_relation_id_by_table_name(&table.schema_name, &table.table_name)
+                .await?;
+
             let postgres_columns = self
                 .postgres_connection
                 .list_columns_by_tablename(&table.schema_name, &table.table_name)
@@ -208,6 +216,10 @@ impl PostgresPipe {
                 table.table_name.as_str(),
                 postgres_columns.clone(),
                 clickhouse_columns.clone(),
+            );
+            self.context.table_relation_map.insert(
+                relation_id as u32,
+                (table.schema_name.clone(), table.table_name.clone()),
             );
 
             if !clickhouse_columns.is_empty() {
@@ -282,35 +294,112 @@ impl PostgresPipe {
 
 impl PostgresPipe {
     async fn sync_loop(&self) {
+        let publication_name = self.postgres_config.get_publication_name();
+        let replication_slot_name = self.postgres_config.get_replication_slot_name();
+
         loop {
-            // Peek new rows
-            let peek_result = self.peek().await;
+            // 1. Peek new rows
+            let peek_result = self
+                .postgres_connection
+                .peek_wal_changes(&publication_name, &replication_slot_name, 65536)
+                .await;
 
             let peek_result = match peek_result {
                 Ok(peek) => peek,
                 Err(e) => {
-                    log::error!("Error peeking: {:?}", e);
+                    // 1.1. Handle peek error. wait and retry
+                    log::error!("Error peeking WAL changes: {e:?}");
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     continue;
                 }
             };
 
-            // Handle peek result
-            // ...
+            // parse peeked rows
 
-            // Advance the exporter
-            if let Err(e) = self.advance(&peek_result.advance_key).await {
-                log::error!("Error advancing exporter: {:?}", e);
+            if peek_result.is_empty() {
+                log::info!("No new changes found, waiting for next iteration...");
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 continue;
             }
+
+            for row in peek_result.iter() {
+                let Some(parsed_row) =
+                    parse_pg_output(&row.data).expect("Failed to parse PgOutput")
+                else {
+                    continue;
+                };
+
+                let Some((schema_name, table_name)) =
+                    self.context.table_relation_map.get(&parsed_row.relation_id)
+                else {
+                    log::warn!(
+                        "Relation ID {} not found in context table relation map",
+                        parsed_row.relation_id
+                    );
+                    continue;
+                };
+
+                match parsed_row.message_type {
+                    MessageType::Insert | MessageType::Update => {
+                        let insert_query = self.generate_insert_query(
+                            schema_name,
+                            table_name,
+                            &[PostgresCopyRow {
+                                columns: parsed_row.payload,
+                            }],
+                        );
+
+                        if let Err(error) = self
+                            .clickhouse_connection
+                            .execute_query(&insert_query)
+                            .await
+                        {
+                            log::error!(
+                                "Failed to execute insert query for {schema_name}.{table_name}: {error}"
+                            );
+                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                            continue;
+                        }
+                    }
+                    MessageType::Delete => {
+                        let delete_query = self.generate_delete_query(
+                            schema_name,
+                            table_name,
+                            &PostgresCopyRow {
+                                columns: parsed_row.payload,
+                            },
+                        );
+
+                        if let Err(error) = self
+                            .clickhouse_connection
+                            .execute_query(&delete_query)
+                            .await
+                        {
+                            log::error!(
+                                "Failed to execute delete query for {schema_name}.{table_name}: {error}"
+                            );
+                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                            continue;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            // Advance the exporter
+            if !peek_result.is_empty() {
+                let advance_key = &peek_result.last().unwrap().lsn;
+
+                if let Err(e) = self
+                    .postgres_connection
+                    .advance_replication_slot(&replication_slot_name, advance_key)
+                    .await
+                {
+                    log::error!("Error advancing exporter: {e:?}");
+                    continue;
+                }
+            }
         }
-    }
-
-    async fn peek(&self) -> Result<PeekResult, Errors> {
-        unimplemented!("Postgres peek not implemented yet");
-    }
-
-    async fn advance(&self, _key: &str) -> Result<(), Errors> {
-        unimplemented!("Postgres advance not implemented yet");
     }
 }
 
@@ -333,7 +422,7 @@ impl PostgresPipe {
         let table_info = self
             .context
             .tables_map
-            .get(&format!("{}.{}", schema_name, table_name))
+            .get(&format!("{schema_name}.{table_name}"))
             .expect("Table info not found in context");
 
         let mut columns = vec![];
@@ -372,12 +461,53 @@ impl PostgresPipe {
             }
 
             let value = value.join(",");
-            values.push(format!("({})", value));
+            values.push(format!("({value})"));
         }
 
         insert_query.push_str(values.join(", ").as_str());
 
         insert_query
+    }
+
+    fn generate_delete_query(
+        &self,
+        schema_name: &str,
+        table_name: &str,
+        row: &PostgresCopyRow,
+    ) -> String {
+        if row.columns.is_empty() {
+            return String::new();
+        }
+
+        let mut delete_query = format!(
+            "ALTER TABLE {}.{table_name} DELETE WHERE ",
+            self.clickhouse_config.connection.database
+        );
+
+        let table_info = self
+            .context
+            .tables_map
+            .get(&format!("{schema_name}.{table_name}"))
+            .expect("Table info not found in context");
+
+        let mut conditions = vec![];
+
+        for (index, column) in table_info.clickhouse_columns.iter().enumerate() {
+            if !column.is_in_primary_key {
+                continue;
+            }
+
+            let value = row.columns[index].text_ref_or("");
+            conditions.push(format!(
+                "{} = '{}'",
+                column.column_name,
+                value.replace("'", "''")
+            ));
+        }
+
+        delete_query.push_str(&conditions.join(" AND "));
+
+        delete_query
     }
 }
 
@@ -401,7 +531,7 @@ pub async fn run_postgres_pipe(config_options: &command::run::ConfigOptions) {
     .await;
 
     if let Err(error) = pipe.ping().await {
-        log::error!("Failed to ping Postgres exporter: {:?}", error);
+        log::error!("Failed to ping Postgres exporter: {error:?}");
         return;
     }
 
