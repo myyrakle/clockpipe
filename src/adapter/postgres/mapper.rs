@@ -1,8 +1,6 @@
-use crate::adapter::postgres::PostgresColumnType;
+use crate::adapter::postgres::PostgresColumn;
 
-pub fn convert_postgres_column_type_to_clickhouse(
-    postgres_column_type: &PostgresColumnType,
-) -> String {
+pub fn convert_postgres_column_type_to_clickhouse(postgres_column_type: &PostgresColumn) -> String {
     match postgres_column_type.data_type.as_str() {
         "int2" => {
             if postgres_column_type.nullable {
@@ -104,7 +102,7 @@ pub fn convert_postgres_column_type_to_clickhouse(
 pub fn generate_clickhouse_create_table_query(
     database_name: &str,
     table_name: &str,
-    columns: &[PostgresColumnType],
+    columns: &[PostgresColumn],
 ) -> String {
     let mut query = format!("CREATE TABLE {}.{}", database_name, table_name);
     query.push_str("(");

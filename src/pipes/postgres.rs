@@ -1,12 +1,49 @@
 use crate::{
-    adapter::{self, postgres::mapper::generate_clickhouse_create_table_query},
+    adapter::{
+        self,
+        clickhouse::ClickhouseColumn,
+        postgres::{
+            PostgresColumn, PostgresCopyRow, mapper::generate_clickhouse_create_table_query,
+        },
+    },
     command,
     errors::Errors,
     interface::{IPipe, PeekResult},
 };
 
+#[derive(Debug, Clone, Default)]
+pub struct PostgresPipeContext {
+    pub tables_map: std::collections::HashMap<String, PostgresPipeTableInfo>,
+}
+
+impl PostgresPipeContext {
+    pub fn set_table(
+        &mut self,
+        schema_name: &str,
+        table_name: &str,
+        postgres_columns: Vec<PostgresColumn>,
+        clickhouse_columns: Vec<ClickhouseColumn>,
+    ) {
+        self.tables_map.insert(
+            format!("{}.{}", schema_name, table_name),
+            PostgresPipeTableInfo {
+                postgres_columns,
+                clickhouse_columns,
+            },
+        );
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PostgresPipeTableInfo {
+    pub postgres_columns: Vec<PostgresColumn>,
+    pub clickhouse_columns: Vec<ClickhouseColumn>,
+}
+
 #[derive(Clone)]
 pub struct PostgresPipe {
+    pub context: PostgresPipeContext,
+
     pub postgres_config: crate::config::PostgresConfig,
     pub clickhouse_config: crate::config::ClickHouseConfig,
     postgres_connection: adapter::postgres::PostgresConnection,
@@ -27,6 +64,7 @@ impl PostgresPipe {
             adapter::clickhouse::ClickhouseConnection::new(&clickhouse_config.connection);
 
         PostgresPipe {
+            context: PostgresPipeContext::default(),
             postgres_config,
             clickhouse_config,
             postgres_connection,
@@ -53,14 +91,15 @@ impl IPipe for PostgresPipe {
         Ok(())
     }
 
-    async fn run_pipe(&self) {
+    async fn run_pipe(&mut self) {
         self.initialize().await;
-        self.sync().await;
+        self.first_sync().await;
+        self.sync_loop().await;
     }
 }
 
 impl PostgresPipe {
-    async fn initialize(&self) {
+    async fn initialize(&mut self) {
         log::info!("Initializing Postgres exporter...");
 
         log::info!("Setup publication and replication slot");
@@ -147,7 +186,7 @@ impl PostgresPipe {
         Ok(())
     }
 
-    async fn setup_table(&self) -> Result<(), Errors> {
+    async fn setup_table(&mut self) -> Result<(), Errors> {
         log::info!("Setting up table in ClickHouse...");
 
         for table in &self.postgres_config.tables {
@@ -163,6 +202,13 @@ impl PostgresPipe {
                     &table.table_name,
                 )
                 .await?;
+
+            self.context.set_table(
+                table.schema_name.as_str(),
+                table.table_name.as_str(),
+                postgres_columns.clone(),
+                clickhouse_columns.clone(),
+            );
 
             if !clickhouse_columns.is_empty() {
                 // TODO: 컬럼이 추가된 경우에 대한 대응
@@ -193,7 +239,49 @@ impl PostgresPipe {
 }
 
 impl PostgresPipe {
-    async fn sync(&self) {
+    async fn first_sync(&self) {
+        log::info!("Starting initial sync...");
+
+        for table in &self.postgres_config.tables {
+            if self
+                .clickhouse_connection
+                .table_is_not_empty(
+                    &self.clickhouse_config.connection.database,
+                    &table.table_name,
+                )
+                .await
+                .expect("Failed to check if table exists")
+            {
+                log::info!(
+                    "Table {} already exists in ClickHouse, skipping initial sync.",
+                    table.table_name
+                );
+                continue;
+            }
+
+            let rows = self
+                .postgres_connection
+                .copy_table_to_stdout(&table.schema_name, &table.table_name)
+                .await
+                .expect("Failed to copy table data from Postgres");
+
+            for chunk in rows.chunks(100000) {
+                let insert_query =
+                    self.generate_insert_query(&table.schema_name, &table.table_name, chunk);
+
+                if !insert_query.is_empty() {
+                    self.clickhouse_connection
+                        .execute_query(&insert_query)
+                        .await
+                        .expect("Failed to execute insert query in ClickHouse");
+                }
+            }
+        }
+    }
+}
+
+impl PostgresPipe {
+    async fn sync_loop(&self) {
         loop {
             // Peek new rows
             let peek_result = self.peek().await;
@@ -226,12 +314,79 @@ impl PostgresPipe {
     }
 }
 
+impl PostgresPipe {
+    fn generate_insert_query(
+        &self,
+        schema_name: &str,
+        table_name: &str,
+        rows: &[PostgresCopyRow],
+    ) -> String {
+        if rows.is_empty() {
+            return String::new();
+        }
+
+        let mut insert_query = format!(
+            "INSERT INTO {}.{table_name} ",
+            self.clickhouse_config.connection.database
+        );
+
+        let table_info = self
+            .context
+            .tables_map
+            .get(&format!("{}.{}", schema_name, table_name))
+            .expect("Table info not found in context");
+
+        let mut columns = vec![];
+        let mut column_names = vec![];
+
+        for clickhouse_column in &table_info.clickhouse_columns {
+            let Some(postgres_column) = table_info
+                .postgres_columns
+                .iter()
+                .find(|col| col.column_name == clickhouse_column.column_name)
+            else {
+                continue;
+            };
+
+            columns.push((clickhouse_column.clone(), postgres_column.clone()));
+            column_names.push(clickhouse_column.column_name.clone());
+        }
+
+        insert_query.push_str(&format!("({}) ", column_names.join(", ")));
+        insert_query.push_str("VALUES");
+
+        let mut values = vec![];
+
+        for row in rows {
+            let mut value = vec![];
+
+            for (clickhouse_column, _) in columns.iter() {
+                let column_index = (clickhouse_column.column_index - 1) as usize;
+
+                let value_column = match row.columns.get(column_index) {
+                    Some(raw_value) => clickhouse_column.value(raw_value.to_owned()),
+                    _ => clickhouse_column.default_value(),
+                };
+
+                value.push(value_column);
+            }
+
+            let value = value.join(",");
+            values.push(format!("({})", value));
+        }
+
+        insert_query.push_str(values.join(", ").as_str());
+
+        insert_query
+    }
+}
+
 pub async fn run_postgres_pipe(config_options: &command::run::ConfigOptions) {
     let config = config_options
         .read_config_from_file()
         .expect("Failed to read configuration");
 
-    let pipe = PostgresPipe::new(
+    let mut pipe = PostgresPipe::new(
         config
             .source
             .postgres
