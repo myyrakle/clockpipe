@@ -55,7 +55,8 @@ impl IPipe for PostgresPipe {
 
     async fn run_pipe(&self) {
         self.initialize().await;
-        self.sync().await;
+        self.first_sync().await;
+        self.sync_loop().await;
     }
 }
 
@@ -193,7 +194,15 @@ impl PostgresPipe {
 }
 
 impl PostgresPipe {
-    async fn sync(&self) {
+    async fn first_sync(&self) {
+        log::info!("Starting initial sync...");
+
+        for table in &self.postgres_config.tables {}
+    }
+}
+
+impl PostgresPipe {
+    async fn sync_loop(&self) {
         loop {
             // Peek new rows
             let peek_result = self.peek().await;
