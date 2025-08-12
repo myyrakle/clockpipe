@@ -149,7 +149,7 @@ pub struct PublicationTable {
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
-pub struct PostgresColumnType {
+pub struct PostgresColumn {
     pub column_index: i32,
     pub column_name: String,
     pub data_type: String,
@@ -302,7 +302,7 @@ impl PostgresConnection {
         &self,
         database_name: &str,
         table_name: &str,
-    ) -> errors::Result<Vec<PostgresColumnType>> {
+    ) -> errors::Result<Vec<PostgresColumn>> {
         let query = format!(
             r#"
              SELECT 
@@ -341,7 +341,7 @@ impl PostgresConnection {
         "#
         );
 
-        let rows: Vec<PostgresColumnType> = sqlx::query_as(&query)
+        let rows: Vec<PostgresColumn> = sqlx::query_as(&query)
             .bind(table_name)
             .bind(database_name)
             .fetch_all(&self.pool)
@@ -483,7 +483,10 @@ impl PostgresConnection {
 
             // row separator
             if c == '\n' {
-                if !current_word.is_empty() {
+                if current_word == "\\N" {
+                    current_row.columns.push(None);
+                    current_word.clear();
+                } else if !current_word.is_empty() {
                     current_row.columns.push(Some(current_word));
                     current_word = String::new();
                 }
