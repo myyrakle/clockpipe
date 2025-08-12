@@ -16,6 +16,7 @@ use crate::{
 #[derive(Debug, Clone, Default)]
 pub struct PostgresPipeContext {
     pub tables_map: std::collections::HashMap<String, PostgresPipeTableInfo>,
+    pub table_relation_map: std::collections::HashMap<u32, (String, String)>,
 }
 
 impl PostgresPipeContext {
@@ -192,6 +193,11 @@ impl PostgresPipe {
         log::info!("Setting up table in ClickHouse...");
 
         for table in &self.postgres_config.tables {
+            let relation_id = self
+                .postgres_connection
+                .get_relation_id_by_table_name(&table.schema_name, &table.table_name)
+                .await?;
+
             let postgres_columns = self
                 .postgres_connection
                 .list_columns_by_tablename(&table.schema_name, &table.table_name)
@@ -210,6 +216,10 @@ impl PostgresPipe {
                 table.table_name.as_str(),
                 postgres_columns.clone(),
                 clickhouse_columns.clone(),
+            );
+            self.context.table_relation_map.insert(
+                relation_id as u32,
+                (table.schema_name.clone(), table.table_name.clone()),
             );
 
             if !clickhouse_columns.is_empty() {
@@ -313,10 +323,40 @@ impl PostgresPipe {
                     continue;
                 };
 
+                let Some((schema_name, table_name)) =
+                    self.context.table_relation_map.get(&parsed_row.relation_id)
+                else {
+                    log::warn!(
+                        "Relation ID {} not found in context table relation map",
+                        parsed_row.relation_id
+                    );
+                    continue;
+                };
+
                 match parsed_row.message_type {
                     MessageType::Insert | MessageType::Update => {
-                        println!("relation ID {}", parsed_row.relation_id);
-                        println!("payload {:?}", parsed_row.payload);
+                        let insert_query = self.generate_insert_query(
+                            &schema_name,
+                            &table_name,
+                            &[PostgresCopyRow {
+                                columns: parsed_row.payload,
+                            }],
+                        );
+
+                        if let Err(error) = self
+                            .clickhouse_connection
+                            .execute_query(&insert_query)
+                            .await
+                        {
+                            log::error!(
+                                "Failed to execute insert query for {}.{}: {}",
+                                schema_name,
+                                table_name,
+                                error
+                            );
+                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                            continue;
+                        }
                     }
                     MessageType::Delete => {
                         println!("relation ID {}", parsed_row.relation_id);

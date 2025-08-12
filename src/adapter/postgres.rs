@@ -104,6 +104,35 @@ impl PostgresConnection {
         Ok(result[0].0.clone())
     }
 
+    pub async fn get_relation_id_by_table_name(
+        &self,
+        schema_name: &str,
+        table_name: &str,
+    ) -> errors::Result<u32> {
+        let result: Vec<(i32,)> = sqlx::query_as(
+            "SELECT c.oid::INTEGER FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = $1 AND n.nspname = $2"
+        )
+        .bind(table_name)
+        .bind(schema_name)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| {
+            errors::Errors::TableNotFoundError(format!(
+                "Failed to get relation ID for table {}.{}: {}",
+                schema_name, table_name, e
+            ))
+        })?;
+
+        if result.is_empty() {
+            return Err(errors::Errors::TableNotFoundError(format!(
+                "No table found for {}.{}",
+                schema_name, table_name
+            )));
+        }
+
+        Ok(result[0].0 as u32)
+    }
+
     pub async fn get_columns_by_relation_id(
         &self,
         relation_id: i64,
