@@ -197,7 +197,31 @@ impl PostgresPipe {
     async fn first_sync(&self) {
         log::info!("Starting initial sync...");
 
-        for table in &self.postgres_config.tables {}
+        for table in &self.postgres_config.tables {
+            if self
+                .clickhouse_connection
+                .table_is_not_empty(
+                    &self.clickhouse_config.connection.database,
+                    &table.table_name,
+                )
+                .await
+                .expect("Failed to check if table exists")
+            {
+                log::info!(
+                    "Table {} already exists in ClickHouse, skipping initial sync.",
+                    table.table_name
+                );
+                continue;
+            }
+
+            let rows = self
+                .postgres_connection
+                .copy_table_to_stdout(&table.schema_name, &table.table_name)
+                .await
+                .expect("Failed to copy table data from Postgres");
+
+            for _chunk in rows.chunks(100000) {}
+        }
     }
 }
 

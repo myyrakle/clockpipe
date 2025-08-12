@@ -91,7 +91,7 @@ impl ClickhouseConnection {
         Ok(())
     }
 
-    pub async fn exists_table(
+    pub async fn table_is_not_empty(
         &self,
         database_name: &str,
         table_name: &str,

@@ -400,9 +400,10 @@ impl PostgresConnection {
     /// COPY TO STDOUT을 사용하여 테이블 데이터를 바이트로 다운로드
     pub async fn copy_table_to_stdout(
         &self,
+        schema_name: &str,
         table_name: &str,
     ) -> errors::Result<Vec<PostgresCopyRow>> {
-        let query = format!("COPY (SELECT * FROM {table_name}) TO STDOUT");
+        let query = format!("COPY (SELECT * FROM {schema_name}.{table_name}) TO STDOUT");
 
         log::debug!("Executing COPY TO STDOUT query: {}", query);
 
