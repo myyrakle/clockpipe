@@ -377,7 +377,7 @@ impl PostgresConnection {
         replication_slot_name: &str,
         limit: i64, // recommendation: 65536
     ) -> errors::Result<Vec<PeekWalChangeResult>> {
-        println!(
+        log::debug!(
             "Peeking WAL changes for publication: {publication_name}, slot: {replication_slot_name}, limit: {limit}"
         );
 
@@ -439,7 +439,7 @@ impl PostgresConnection {
 
         tokio::spawn(async move {
             if let Err(e) = connection.await {
-                eprintln!("Connection error: {e}");
+                log::error!("Connection error: {e}");
             }
         });
 
