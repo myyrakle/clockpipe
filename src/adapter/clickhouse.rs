@@ -23,8 +23,9 @@ impl ClickhouseColumn {
             "Bool" => "false".to_string(),
             "String" => "''".to_string(),
             "Decimal" => "0.0".to_string(),
-            "Date" => "current_date()".to_string(),
-            "DateTime" => "now()".to_string(),
+            "Date" | "Date32" => "current_date()".to_string(),
+            "DateTime" | "DateTime64" => "now()".to_string(),
+            "Time" | "Time64" => "now()".to_string(),
             _ => {
                 if self.data_type.starts_with("Array") {
                     "[]".to_string()
@@ -53,12 +54,16 @@ impl ClickhouseColumn {
                     Self::escape_single_quotes(&value.text_or("".to_string()))
                 )
             }
-            "Date" | "Nullable(Date)" => format!(
+            "Date" | "Date32" | "Nullable(Date)" | "Nullable(Date32)" => format!(
                 "toDate('{}')",
                 Self::cut_millisecond(&value.text_or("current_date()".to_string()))
             ),
-            "DateTime" | "Nullable(DateTime)" => format!(
+            "DateTime" | "DateTime64" | "Nullable(DateTime)" | "Nullable(DateTime64)" => format!(
                 "toDateTime('{}')",
+                Self::cut_millisecond(&value.text_or("now()".to_string()))
+            ),
+            "Time" | "Time64" | "Nullable(Time)" | "Nullable(Time64)" => format!(
+                "toTime('{}')",
                 Self::cut_millisecond(&value.text_or("now()".to_string()))
             ),
             "Array(String)" => {
