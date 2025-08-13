@@ -1,0 +1,13 @@
+[Unit]
+Description=clockpipe
+
+[Service]
+Type=simple
+Restart=on-failure
+RestartSec=10
+User=user
+WorkingDirectory=/home/user/clockpipe
+ExecStart=/home/user/.cargo/bin/clockpipe run --config-file /home/user/clockpipe/clockpipe-config.json
+
+[Install]
+WantedBy=network-online.target
