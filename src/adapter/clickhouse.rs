@@ -156,8 +156,6 @@ impl ClickhouseConnection {
             ))
         })?;
 
-        println!("Successfully executed query");
-
         Ok(())
     }
 
