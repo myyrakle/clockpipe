@@ -20,6 +20,7 @@ impl ClickhouseColumn {
         match self.data_type.as_str() {
             "Int8" | "Int16" | "Int32" | "Int64" => "0".to_string(),
             "Float32" | "Float64" => "0.0".to_string(),
+            "Bool" => "false".to_string(),
             "String" => "''".to_string(),
             "Decimal" => "0.0".to_string(),
             "Date" => "current_date()".to_string(),
@@ -45,9 +46,18 @@ impl ClickhouseColumn {
             "Float32" | "Float64" | "Nullable(Float32)" | "Nullable(Float64)" => {
                 value.text_or("0.0".to_string())
             }
+            "Bool" | "Nullable(Bool)" => Self::parse_bool(&value.text_or("false".to_string())),
             "String" | "Nullable(String)" => {
                 format!("'{}'", value.text_or("''".to_string()).replace("'", "''"))
             }
+            "Date" | "Nullable(Date)" => format!(
+                "toDate('{}')",
+                Self::cut_millisecond(&value.text_or("current_date()".to_string()))
+            ),
+            "DateTime" | "Nullable(DateTime)" => format!(
+                "toDateTime('{}')",
+                Self::cut_millisecond(&value.text_or("now()".to_string()))
+            ),
             "Decimal" | "Nullable(Decimal)" => value.text_or("0.0".to_string()),
             _ => {
                 if self.data_type.starts_with("Array") {
@@ -56,6 +66,22 @@ impl ClickhouseColumn {
                     value.text_or("NULL".to_string())
                 }
             }
+        }
+    }
+
+    pub fn cut_millisecond(date_text: &str) -> String {
+        if let Some(pos) = date_text.find('.') {
+            date_text[..pos].to_string()
+        } else {
+            date_text.to_string()
+        }
+    }
+
+    pub fn parse_bool(value: &str) -> String {
+        match value.to_lowercase().as_str() {
+            "t" | "1" | "true" => "TRUE".to_string(),
+            "f" | "0" | "false" => "FALSE".to_string(),
+            _ => "FALSE".to_string(),
         }
     }
 }
@@ -122,8 +148,12 @@ impl ClickhouseConnection {
     }
 
     pub async fn execute_query(&self, query: &str) -> errors::Result<()> {
-        self.client.query(query).execute().await.map_err(|e| {
-            crate::errors::Errors::DatabaseConnectionError(format!("Failed to execute query: {e}"))
+        let query = query.replace("?", "??");
+
+        self.client.query(&query).execute().await.map_err(|e| {
+            crate::errors::Errors::DatabaseQueryError(format!(
+                "Failed to execute query: {e}, query: {query}"
+            ))
         })?;
 
         Ok(())
