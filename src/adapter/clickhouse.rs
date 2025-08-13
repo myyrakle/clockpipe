@@ -48,7 +48,10 @@ impl ClickhouseColumn {
             }
             "Bool" | "Nullable(Bool)" => Self::parse_bool(&value.text_or("false".to_string())),
             "String" | "Nullable(String)" => {
-                format!("'{}'", value.text_or("''".to_string()).replace("'", "''"))
+                format!(
+                    "'{}'",
+                    Self::escape_single_quotes(&value.text_or("".to_string()))
+                )
             }
             "Date" | "Nullable(Date)" => format!(
                 "toDate('{}')",
@@ -58,6 +61,15 @@ impl ClickhouseColumn {
                 "toDateTime('{}')",
                 Self::cut_millisecond(&value.text_or("now()".to_string()))
             ),
+            "Array(String)" => {
+                let text = value.array_value().unwrap_or_default();
+                let array_values = Self::parse_string_array(&text)
+                    .into_iter()
+                    .map(|s| format!("'{}'", Self::escape_single_quotes(&s)))
+                    .collect::<Vec<String>>();
+
+                format!("[{}]", array_values.join(", "))
+            }
             "Decimal" | "Nullable(Decimal)" => value.text_or("0.0".to_string()),
             _ => {
                 if self.data_type.starts_with("Array") {
@@ -82,6 +94,59 @@ impl ClickhouseColumn {
             "t" | "1" | "true" => "TRUE".to_string(),
             "f" | "0" | "false" => "FALSE".to_string(),
             _ => "FALSE".to_string(),
+        }
+    }
+
+    pub fn parse_string_array(value: &str) -> Vec<String> {
+        let value = value.trim_matches(|c| c == '{' || c == '}');
+
+        let trimmed = value.trim_matches('"');
+        let items: Vec<String> = trimmed.split("\",\"").map(|s| s.to_string()).collect();
+        items
+    }
+
+    pub fn escape_single_quotes(input: &str) -> String {
+        input.replace('\'', "''")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_parse_string_array() {
+        struct TestCase {
+            input: &'static str,
+            expected: Vec<String>,
+        }
+
+        let test_cases = vec![
+            TestCase {
+                input: "{\"Flower design\",\"Pearl embellishments\",\"Stud earrings\",\"Gold accents\",\"Pearl accents\",\"Diamond accents\"}",
+                expected: vec![
+                    "Flower design".to_string(),
+                    "Pearl embellishments".to_string(),
+                    "Stud earrings".to_string(),
+                    "Gold accents".to_string(),
+                    "Pearl accents".to_string(),
+                    "Diamond accents".to_string(),
+                ],
+            },
+            TestCase {
+                input: "{\"Button closure\",\"White stripes on collar, cuffs, and hem\"}",
+                expected: vec![
+                    "Button closure".to_string(),
+                    "White stripes on collar, cuffs, and hem".to_string(),
+                ],
+            },
+        ];
+
+        for test_case in test_cases {
+            let result = super::ClickhouseColumn::parse_string_array(test_case.input);
+            assert_eq!(
+                result, test_case.expected,
+                "Failed for input: {}",
+                test_case.input
+            );
         }
     }
 }
