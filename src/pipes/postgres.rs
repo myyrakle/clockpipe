@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{
     adapter::{
         self,
@@ -322,6 +324,13 @@ impl PostgresPipe {
                 continue;
             }
 
+            pub struct Count {
+                pub insert_count: usize,
+                pub update_count: usize,
+                pub delete_count: usize,
+            }
+            let mut table_log_map = HashMap::new();
+
             for row in peek_result.iter() {
                 let Some(parsed_row) =
                     parse_pg_output(&row.data).expect("Failed to parse PgOutput")
@@ -360,6 +369,20 @@ impl PostgresPipe {
                             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                             continue;
                         }
+
+                        let count = table_log_map
+                            .entry(format!("{schema_name}.{table_name}"))
+                            .or_insert(Count {
+                                insert_count: 0,
+                                update_count: 0,
+                                delete_count: 0,
+                            });
+
+                        if parsed_row.message_type == MessageType::Insert {
+                            count.insert_count += 1;
+                        } else {
+                            count.update_count += 1;
+                        }
                     }
                     MessageType::Delete => {
                         let delete_query = self.generate_delete_query(
@@ -381,6 +404,16 @@ impl PostgresPipe {
                             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                             continue;
                         }
+
+                        let count = table_log_map
+                            .entry(format!("{schema_name}.{table_name}"))
+                            .or_insert(Count {
+                                insert_count: 0,
+                                update_count: 0,
+                                delete_count: 0,
+                            });
+
+                        count.delete_count += 1;
                     }
                     _ => {}
                 }
@@ -398,6 +431,17 @@ impl PostgresPipe {
                     log::error!("Error advancing exporter: {e:?}");
                     continue;
                 }
+            }
+
+            // Log the changes
+            for (table_name, count) in table_log_map.iter() {
+                log::info!(
+                    "Table [{}]: Inserted: {}, Updated: {}, Deleted: {}",
+                    table_name,
+                    count.insert_count,
+                    count.update_count,
+                    count.delete_count
+                );
             }
         }
     }
