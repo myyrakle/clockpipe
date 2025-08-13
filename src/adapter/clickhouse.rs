@@ -48,6 +48,14 @@ impl ClickhouseColumn {
             "String" | "Nullable(String)" => {
                 format!("'{}'", value.text_or("''".to_string()).replace("'", "''"))
             }
+            "Date" | "Nullable(Date)" => format!(
+                "toDate('{}')",
+                Self::cut_millisecond(&value.text_or("current_date()".to_string()))
+            ),
+            "DateTime" | "Nullable(DateTime)" => format!(
+                "toDateTime('{}')",
+                Self::cut_millisecond(&value.text_or("now()".to_string()))
+            ),
             "Decimal" | "Nullable(Decimal)" => value.text_or("0.0".to_string()),
             _ => {
                 if self.data_type.starts_with("Array") {
@@ -56,6 +64,14 @@ impl ClickhouseColumn {
                     value.text_or("NULL".to_string())
                 }
             }
+        }
+    }
+
+    pub fn cut_millisecond(date_text: &str) -> String {
+        if let Some(pos) = date_text.find('.') {
+            date_text[..pos].to_string()
+        } else {
+            date_text.to_string()
         }
     }
 }
