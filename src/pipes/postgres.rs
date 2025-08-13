@@ -98,6 +98,7 @@ impl IPipe for PostgresPipe {
 
     async fn run_pipe(&mut self) {
         self.initialize().await;
+
         self.first_sync().await;
         self.sync_loop().await;
     }
@@ -195,14 +196,36 @@ impl PostgresPipe {
         log::info!("Setting up table in ClickHouse...");
 
         for table in &self.postgres_config.tables {
-            let relation_id = self
-                .postgres_connection
-                .get_relation_id_by_table_name(&table.schema_name, &table.table_name)
-                .await?;
+            let clickhouse_table_not_exists = self
+                .clickhouse_connection
+                .list_columns_by_tablename(
+                    &self.clickhouse_config.connection.database,
+                    &table.table_name,
+                )
+                .await?
+                .is_empty();
 
             let postgres_columns = self
                 .postgres_connection
                 .list_columns_by_tablename(&table.schema_name, &table.table_name)
+                .await?;
+
+            if clickhouse_table_not_exists {
+                log::info!("Creating ClickHouse table for {}", table.table_name);
+                let create_table_query = generate_clickhouse_create_table_query(
+                    &self.clickhouse_config.connection.database,
+                    &table.table_name,
+                    &postgres_columns,
+                );
+
+                self.clickhouse_connection
+                    .execute_query(&create_table_query)
+                    .await?;
+            }
+
+            let relation_id = self
+                .postgres_connection
+                .get_relation_id_by_table_name(&table.schema_name, &table.table_name)
                 .await?;
 
             let clickhouse_columns = self
@@ -223,29 +246,6 @@ impl PostgresPipe {
                 relation_id as u32,
                 (table.schema_name.clone(), table.table_name.clone()),
             );
-
-            if !clickhouse_columns.is_empty() {
-                // TODO: 컬럼이 추가된 경우에 대한 대응
-
-                log::info!(
-                    "{}.{} Table is Already exists in ClickHouse, skipping creation.",
-                    table.schema_name,
-                    table.table_name,
-                );
-
-                continue;
-            }
-
-            log::info!("Creating ClickHouse table for {}", table.table_name);
-            let create_table_query = generate_clickhouse_create_table_query(
-                &self.clickhouse_config.connection.database,
-                &table.table_name,
-                &postgres_columns,
-            );
-
-            self.clickhouse_connection
-                .execute_query(&create_table_query)
-                .await?;
         }
 
         Ok(())
