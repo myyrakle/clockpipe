@@ -20,6 +20,7 @@ impl ClickhouseColumn {
         match self.data_type.as_str() {
             "Int8" | "Int16" | "Int32" | "Int64" => "0".to_string(),
             "Float32" | "Float64" => "0.0".to_string(),
+            "Bool" => "false".to_string(),
             "String" => "''".to_string(),
             "Decimal" => "0.0".to_string(),
             "Date" => "current_date()".to_string(),
@@ -45,6 +46,7 @@ impl ClickhouseColumn {
             "Float32" | "Float64" | "Nullable(Float32)" | "Nullable(Float64)" => {
                 value.text_or("0.0".to_string())
             }
+            "Bool" | "Nullable(Bool)" => Self::parse_bool(&value.text_or("false".to_string())),
             "String" | "Nullable(String)" => {
                 format!("'{}'", value.text_or("''".to_string()).replace("'", "''"))
             }
@@ -72,6 +74,14 @@ impl ClickhouseColumn {
             date_text[..pos].to_string()
         } else {
             date_text.to_string()
+        }
+    }
+
+    pub fn parse_bool(value: &str) -> String {
+        match value.to_lowercase().as_str() {
+            "t" | "1" | "true" => "TRUE".to_string(),
+            "f" | "0" | "false" => "FALSE".to_string(),
+            _ => "FALSE".to_string(),
         }
     }
 }
