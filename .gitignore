@@ -24,5 +24,3 @@ target
 # Added by cargo
 
 /target
-
-*.json
