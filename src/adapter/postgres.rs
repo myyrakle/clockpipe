@@ -36,11 +36,9 @@ impl PostgresConnection {
                     config: config.clone(),
                 })
             }
-            Err(e) => {
-                Err(errors::Errors::DatabaseConnectionError(format!(
-                    "Failed to connect to Postgres database: {e}"
-                )))
-            }
+            Err(e) => Err(errors::Errors::DatabaseConnectionError(format!(
+                "Failed to connect to Postgres database: {e}"
+            ))),
         }
     }
 
@@ -233,9 +231,7 @@ impl PostgresConnection {
         publication_name: &str,
         table_names: &[String],
     ) -> errors::Result<()> {
-        log::debug!(
-            "Creating publication {publication_name} for tables: {table_names:?}"
-        );
+        log::debug!("Creating publication {publication_name} for tables: {table_names:?}");
 
         let query = format!(
             "CREATE PUBLICATION {} FOR TABLE {}",
@@ -264,9 +260,7 @@ impl PostgresConnection {
         );
 
         sqlx::query(&query).execute(&self.pool).await.map_err(|e| {
-            errors::Errors::PublicationAddFailed(format!(
-                "Failed to add table to publication: {e}"
-            ))
+            errors::Errors::PublicationAddFailed(format!("Failed to add table to publication: {e}"))
         })?;
 
         Ok(())
@@ -352,7 +346,9 @@ impl PostgresConnection {
                     WHERE relname = c.table_name
                 )
             WHERE c.table_name = $1 AND c.table_schema = $2
-        "#.to_string();
+            ORDER BY c.ordinal_position ASC
+        "#
+        .to_string();
 
         let rows: Vec<PostgresColumn> = sqlx::query_as(&query)
             .bind(table_name)
@@ -362,6 +358,15 @@ impl PostgresConnection {
             .map_err(|e| {
                 errors::Errors::ListTableColumnsFailed(format!("Failed to get columns: {e}"))
             })?;
+
+        let rows = rows
+            .into_iter()
+            .enumerate()
+            .map(|(usize, mut row)| {
+                row.column_index = usize as i32 + 1; // Ensure column_index starts from 1
+                row
+            })
+            .collect::<Vec<_>>();
 
         Ok(rows)
     }
@@ -398,9 +403,8 @@ impl PostgresConnection {
         replication_slot_name: &str,
         lsn: &str,
     ) -> errors::Result<()> {
-        let query = format!(
-            "SELECT pg_replication_slot_advance('{replication_slot_name}', '{lsn}');"
-        );
+        let query =
+            format!("SELECT pg_replication_slot_advance('{replication_slot_name}', '{lsn}');");
 
         sqlx::query(&query).execute(&self.pool).await.map_err(|e| {
             errors::Errors::ReplicationSlotAdvanceFailed(format!(
