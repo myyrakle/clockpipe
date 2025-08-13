@@ -58,6 +58,11 @@ impl ClickhouseColumn {
                 "toDateTime('{}')",
                 Self::cut_millisecond(&value.text_or("now()".to_string()))
             ),
+            "Array(String)" => {
+                // TODO: 문자열 안에 "가 들어있는 예외케이스 처리하기
+                let array_value = value.array_value().unwrap_or_default();
+                format!("[{}]", array_value.replace("\"", "'"))
+            }
             "Decimal" | "Nullable(Decimal)" => value.text_or("0.0".to_string()),
             _ => {
                 if self.data_type.starts_with("Array") {
