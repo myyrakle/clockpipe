@@ -4,6 +4,7 @@ pub enum Errors {
     IOError(std::io::Error),
     ClickhouseDatabaseError(String),
     DatabaseConnectionError(String),
+    DatabaseQueryError(String),
     DatabasePingError(String),
     TableNotFoundError(String),
     GetTableNameFailed(String),
@@ -32,6 +33,7 @@ impl std::fmt::Display for Errors {
         match self {
             Errors::ConfigReadError(msg) => write!(f, "Configuration read error: {msg}"),
             Errors::IOError(err) => write!(f, "I/O error: {err}"),
+            Errors::DatabaseQueryError(msg) => write!(f, "Database query error: {msg}"),
             Errors::DatabaseConnectionError(msg) => write!(f, "Database connection error: {msg}"),
             Errors::DatabasePingError(msg) => write!(f, "Database ping error: {msg}"),
             Errors::TableNotFoundError(msg) => write!(f, "Table not found: {msg}"),
