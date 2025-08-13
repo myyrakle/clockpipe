@@ -1,8 +1,11 @@
 use sqlx::postgres::PgConnectOptions;
-pub mod mapper;
 pub mod pgoutput;
 
-use crate::{adapter::postgres::pgoutput::PgOutputValue, config::PostgresConnectionConfig, errors};
+use crate::{
+    adapter::{clickhouse::ClickhouseType, postgres::pgoutput::PgOutputValue},
+    config::PostgresConnectionConfig,
+    errors,
+};
 
 #[derive(Debug, Clone)]
 pub struct PostgresConnection {
@@ -177,6 +180,107 @@ pub struct PostgresColumn {
     pub nullable: bool,
     pub is_primary_key: bool,
     pub comment: String,
+}
+
+impl PostgresColumn {
+    pub fn convert_to_clickhouse_type(&self) -> ClickhouseType {
+        match self.data_type.as_str() {
+            "int2" => {
+                if self.nullable {
+                    ClickhouseType::nullable(ClickhouseType::Int16)
+                } else {
+                    ClickhouseType::Int16
+                }
+            }
+            "_int2" => ClickhouseType::array(ClickhouseType::Int16),
+            "int4" | "int" => {
+                if self.nullable {
+                    ClickhouseType::nullable(ClickhouseType::Int32)
+                } else {
+                    ClickhouseType::Int32
+                }
+            }
+            "_int4" => ClickhouseType::array(ClickhouseType::Int32),
+            "int8" => {
+                if self.nullable {
+                    ClickhouseType::nullable(ClickhouseType::Int64)
+                } else {
+                    ClickhouseType::Int64
+                }
+            }
+            "_int8" => ClickhouseType::array(ClickhouseType::Int64),
+            "float4" => {
+                if self.nullable {
+                    ClickhouseType::nullable(ClickhouseType::Float32)
+                } else {
+                    ClickhouseType::Float32
+                }
+            }
+            "_float4" => ClickhouseType::array(ClickhouseType::Float32),
+            "float8" => {
+                if self.nullable {
+                    ClickhouseType::nullable(ClickhouseType::Float64)
+                } else {
+                    ClickhouseType::Float64
+                }
+            }
+            "_float8" => ClickhouseType::array(ClickhouseType::Float64),
+            "numeric" => {
+                if self.nullable {
+                    ClickhouseType::nullable(ClickhouseType::Decimal)
+                } else {
+                    ClickhouseType::Decimal
+                }
+            }
+            "_numeric" => ClickhouseType::array(ClickhouseType::Decimal),
+            // varchar
+            "varchar" | "text" | "json" | "jsonb" => {
+                if self.nullable {
+                    ClickhouseType::nullable(ClickhouseType::String)
+                } else {
+                    ClickhouseType::String
+                }
+            }
+            "_varchar" => ClickhouseType::array(ClickhouseType::String),
+            "_text" => ClickhouseType::array(ClickhouseType::String),
+            // Boolean
+            "bool" => {
+                if self.nullable {
+                    ClickhouseType::nullable(ClickhouseType::Bool)
+                } else {
+                    ClickhouseType::Bool
+                }
+            }
+            "_bool" => ClickhouseType::array(ClickhouseType::Bool),
+            // time
+            "timestamp" | "timestamptz" => {
+                if self.nullable {
+                    ClickhouseType::nullable(ClickhouseType::DateTime(Default::default()))
+                } else {
+                    ClickhouseType::DateTime(Default::default())
+                }
+            }
+            "date" => {
+                if self.nullable {
+                    ClickhouseType::nullable(ClickhouseType::Date)
+                } else {
+                    ClickhouseType::Date
+                }
+            }
+            _ => {
+                log::warn!(
+                    "Unsupported Postgres data type: {}. Defaulting to String.",
+                    &self.data_type
+                );
+
+                if self.nullable {
+                    ClickhouseType::nullable(ClickhouseType::String)
+                } else {
+                    ClickhouseType::String
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
