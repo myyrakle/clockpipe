@@ -63,7 +63,10 @@ impl ClickhouseColumn {
 
                 // TODO: 문자열 안에 "가 들어있는 예외케이스 처리하기
                 let text = value.array_value().unwrap_or_default();
-                let array_values = Self::parse_string_array(&text);
+                let array_values = Self::parse_string_array(&text)
+                    .into_iter()
+                    .map(|s| format!("'{s}'"))
+                    .collect::<Vec<String>>();
 
                 format!("[{}]", array_values.join(", "))
             }
