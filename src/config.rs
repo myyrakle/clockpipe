@@ -68,6 +68,8 @@ impl PostgresConnectionConfig {
 pub struct PostgresSource {
     pub schema_name: String,
     pub table_name: String,
+    #[serde(default)]
+    pub skip_copy: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
