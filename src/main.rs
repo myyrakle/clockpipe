@@ -11,7 +11,9 @@ pub mod pipes;
 #[tokio::main]
 async fn main() {
     unsafe {
-        env::set_var("RUST_LOG", "info");
+        if env::var("RUST_LOG").is_err() {
+            env::set_var("RUST_LOG", "info");
+        }
     }
     env_logger::init();
 
