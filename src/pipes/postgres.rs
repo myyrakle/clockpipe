@@ -450,14 +450,28 @@ impl PostgresPipe {
             let mut value = vec![];
 
             for (clickhouse_column, _) in columns.iter() {
-                let column_index = (clickhouse_column.column_index - 1) as usize;
+                let Some(postgres_column) = table_info
+                    .postgres_columns
+                    .iter()
+                    .find(|col| col.column_name == clickhouse_column.column_name)
+                else {
+                    log::warn!(
+                        "Postgres column {} not found in ClickHouse table {}. Skipping.",
+                        clickhouse_column.column_name,
+                        table_name
+                    );
+                    continue;
+                };
 
-                let value_column = match row.columns.get(column_index) {
+                let postgres_raw_column_value =
+                    row.columns.get(postgres_column.column_index as usize - 1);
+
+                let column_value = match postgres_raw_column_value {
                     Some(raw_value) => clickhouse_column.value(raw_value.to_owned()),
                     _ => clickhouse_column.default_value(),
                 };
 
-                value.push(value_column);
+                value.push(column_value);
             }
 
             let value = value.join(",");
