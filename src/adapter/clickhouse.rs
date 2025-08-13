@@ -15,6 +15,49 @@ pub struct ClickhouseColumn {
     pub is_in_primary_key: bool,
 }
 
+// https://clickhouse.com/docs/sql-reference/data-types
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ClickhouseType {
+    Int8,
+    Int16,
+    Int32,
+    Int64,
+    Int128,
+    Int256,
+    UInt8,
+    UInt16,
+    UInt32,
+    UInt64,
+    UInt128,
+    UInt256,
+    Float32,
+    Float64,
+    Bool,
+    String,
+    FixedString(u64),
+    Decimal,
+    Date,
+    Date32,
+    Time,
+    Time64(u8),
+    DateTime(DateTime),
+    DateTime64,
+    UUID,
+    Array(Box<ClickhouseType>),
+    Nullable(Box<ClickhouseType>),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DateTime {
+    pub timezone: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DateTime64 {
+    pub precision: u8,
+    pub timezone: Option<String>,
+}
+
 impl ClickhouseColumn {
     pub fn default_value(&self) -> String {
         match self.data_type.as_str() {
