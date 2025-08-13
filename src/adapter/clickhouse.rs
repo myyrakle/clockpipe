@@ -41,10 +41,46 @@ pub enum ClickhouseType {
     Time,
     Time64(u8),
     DateTime(DateTime),
-    DateTime64,
+    DateTime64(DateTime64),
     UUID,
     Array(Box<ClickhouseType>),
     Nullable(Box<ClickhouseType>),
+}
+
+impl ClickhouseType {
+    pub fn to_type_text(&self) -> String {
+        match self {
+            ClickhouseType::Int8 => "Int8".to_string(),
+            ClickhouseType::Int16 => "Int16".to_string(),
+            ClickhouseType::Int32 => "Int32".to_string(),
+            ClickhouseType::Int64 => "Int64".to_string(),
+            ClickhouseType::Int128 => "Int128".to_string(),
+            ClickhouseType::Int256 => "Int256".to_string(),
+            ClickhouseType::UInt8 => "UInt8".to_string(),
+            ClickhouseType::UInt16 => "UInt16".to_string(),
+            ClickhouseType::UInt32 => "UInt32".to_string(),
+            ClickhouseType::UInt64 => "UInt64".to_string(),
+            ClickhouseType::UInt128 => "UInt128".to_string(),
+            ClickhouseType::UInt256 => "UInt256".to_string(),
+            ClickhouseType::Float32 => "Float32".to_string(),
+            ClickhouseType::Float64 => "Float64".to_string(),
+            ClickhouseType::Bool => "Bool".to_string(),
+            ClickhouseType::String => "String".to_string(),
+            ClickhouseType::FixedString(size) => format!("FixedString({})", size),
+            ClickhouseType::Decimal => "Decimal".to_string(),
+            ClickhouseType::Date => "Date".to_string(),
+            ClickhouseType::Date32 => "Date32".to_string(),
+            ClickhouseType::Time => "Time".to_string(),
+            ClickhouseType::Time64(precision) => format!("Time64({})", precision),
+            ClickhouseType::DateTime(datetime) => datetime.to_type_text(),
+            ClickhouseType::DateTime64(datetime64) => datetime64.to_type_text(),
+            ClickhouseType::UUID => "UUID".to_string(),
+            ClickhouseType::Array(inner_type) => format!("Array({})", inner_type.to_type_text()),
+            ClickhouseType::Nullable(inner_type) => {
+                format!("Nullable({})", inner_type.to_type_text())
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,10 +88,28 @@ pub struct DateTime {
     pub timezone: Option<String>,
 }
 
+impl DateTime {
+    pub fn to_type_text(&self) -> String {
+        match &self.timezone {
+            Some(tz) => format!("DateTime('{}')", tz),
+            None => "DateTime".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DateTime64 {
     pub precision: u8,
     pub timezone: Option<String>,
+}
+
+impl DateTime64 {
+    pub fn to_type_text(&self) -> String {
+        match &self.timezone {
+            Some(tz) => format!("DateTime64({}, '{}')", self.precision, tz),
+            None => format!("DateTime64({})", self.precision),
+        }
+    }
 }
 
 impl ClickhouseColumn {
