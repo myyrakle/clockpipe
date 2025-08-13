@@ -29,6 +29,10 @@ impl ClickhouseColumn {
             _ => {
                 if self.data_type.starts_with("Array") {
                     "[]".to_string()
+                } else if self.data_type.starts_with("Date") {
+                    "now()".to_string()
+                } else if self.data_type.starts_with("Time") {
+                    "now()".to_string()
                 } else {
                     "NULL".to_string() // Default for unknown types
                 }
@@ -79,6 +83,16 @@ impl ClickhouseColumn {
             _ => {
                 if self.data_type.starts_with("Array") {
                     format!("[{}]", value.array_value().unwrap_or_default(),)
+                } else if self.data_type.contains("DateTime") {
+                    format!(
+                        "toDateTime('{}')",
+                        Self::cut_millisecond(&value.text_or("now()".to_string()))
+                    )
+                } else if self.data_type.contains("Time") {
+                    format!(
+                        "toTime('{}')",
+                        Self::cut_millisecond(&value.text_or("now()".to_string()))
+                    )
                 } else {
                     value.text_or("NULL".to_string())
                 }
