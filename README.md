@@ -1,5 +1,7 @@
 # clockpipe
 
+![](https://img.shields.io/badge/language-Rust-red) ![](https://img.shields.io/badge/version-0.2.0-brightgreen) [![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/myyrakle/clockpipe/blob/master/LICENSE)
+
 - An alternative to clickpipe for on-premise clickhouse users.
 - Based on CDC, data from the original source is written to clickhouse.
 
@@ -55,8 +57,37 @@ sudo systemctl restart postgresql
 ## How to Run
 
 - Prepare config file ([example](./example.json))
-- Then, Run
+- Enter the information about the PostgreSQL table you want to synchronize.
+
+```json
+    "tables": [
+        {
+            "schema_name": "public",
+            "table_name": "foo"
+        },
+        {
+            "schema_name": "public",
+            "table_name": "nc_usr_account"
+        }
+    ]
+```
+
+- Then, Run it
 
 ```bash
 clockpipe run --config-file ./clockpipe-config.json
+```
+
+- Pipe automatically creates and synchronizes tables in Clickhouse by querying table information.
+
+- If you don't want the initial synchronization, use the skip_copy option. (CDC-based synchronization still works.)
+
+```json
+    "tables": [
+        {
+            "schema_name": "public",
+            "table_name": "user_table",
+            "skip_copy": true
+        }
+    ]
 ```

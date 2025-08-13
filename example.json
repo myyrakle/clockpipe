@@ -14,7 +14,8 @@
       "tables": [
         {
           "schema_name": "public",
-          "table_name": "user_table"
+          "table_name": "user_table",
+          "skip_copy": true
         }
       ]
     }
