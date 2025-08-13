@@ -4,9 +4,9 @@ use crate::{
     adapter::{
         self,
         clickhouse::ClickhouseColumn,
+        mapper::generate_clickhouse_create_table_query,
         postgres::{
             PostgresColumn, PostgresCopyRow,
-            mapper::generate_clickhouse_create_table_query,
             pgoutput::{MessageType, parse_pg_output},
         },
     },

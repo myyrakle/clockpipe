@@ -48,6 +48,14 @@ pub enum ClickhouseType {
 }
 
 impl ClickhouseType {
+    pub fn nullable(self) -> Self {
+        ClickhouseType::Nullable(Box::new(self.clone()))
+    }
+
+    pub fn array(self) -> Self {
+        ClickhouseType::Array(Box::new(self.clone()))
+    }
+
     pub fn to_type_text(&self) -> String {
         match self {
             ClickhouseType::Int8 => "Int8".to_string(),
@@ -83,7 +91,7 @@ impl ClickhouseType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DateTime {
     pub timezone: Option<String>,
 }
