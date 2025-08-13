@@ -257,6 +257,15 @@ impl PostgresPipe {
         log::info!("Starting initial sync...");
 
         for table in &self.postgres_config.tables {
+            if table.skip_copy {
+                log::info!(
+                    "Skipping initial sync for {}.{} as skip_copy is set to true",
+                    table.schema_name,
+                    table.table_name
+                );
+                continue;
+            }
+
             if self
                 .clickhouse_connection
                 .table_is_not_empty(
