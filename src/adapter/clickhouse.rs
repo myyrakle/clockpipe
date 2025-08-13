@@ -62,9 +62,6 @@ impl ClickhouseColumn {
                 Self::cut_millisecond(&value.text_or("now()".to_string()))
             ),
             "Array(String)" => {
-                println!("raw value: {:?}", value);
-
-                // TODO: 문자열 안에 "가 들어있는 예외케이스 처리하기
                 let text = value.array_value().unwrap_or_default();
                 let array_values = Self::parse_string_array(&text)
                     .into_iter()
