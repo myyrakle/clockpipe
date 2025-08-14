@@ -4,7 +4,7 @@ use crate::{
     adapter::{
         self,
         clickhouse::ClickhouseColumn,
-        mapper::IntoClickhouse,
+        interface::IntoClickhouse,
         postgres::{
             PostgresColumn, PostgresCopyRow,
             pgoutput::{MessageType, parse_pg_output},

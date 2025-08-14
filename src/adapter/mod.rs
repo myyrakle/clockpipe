@@ -1,3 +1,3 @@
 pub mod clickhouse;
-pub mod mapper;
+pub mod interface;
 pub mod postgres;

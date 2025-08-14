@@ -3,7 +3,7 @@ use std::io::Read;
 use byteorder::ReadBytesExt;
 use serde::{Deserialize, Serialize};
 
-use crate::{adapter::mapper::IntoClickhouseValue, errors};
+use crate::{adapter::interface::IntoClickhouseValue, errors};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[repr(u8)]
