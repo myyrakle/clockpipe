@@ -1,10 +1,9 @@
 use crate::{
     adapter::{
         clickhouse::{ClickhouseColumn, ClickhouseType},
-        postgres::{PostgresCopyRow, pgoutput::PgOutputValue},
+        postgres::pgoutput::PgOutputValue,
     },
     config::ClickHouseConfig,
-    pipes::PostgresPipeTableInfo,
 };
 
 pub trait IntoClickhouseColumn {
@@ -148,14 +147,11 @@ pub trait IntoClickhouse {
     fn generate_delete_query(
         &self,
         clickhouse_config: &ClickHouseConfig,
-        source_table_info: &PostgresPipeTableInfo,
+        clickhouse_columns: &[ClickhouseColumn],
+        source_columns: &[impl IntoClickhouseColumn],
         table_name: &str,
-        row: &PostgresCopyRow,
+        row: &impl IntoClickhouseRow,
     ) -> String {
-        if row.columns.is_empty() {
-            return String::new();
-        }
-
         let mut delete_query = format!(
             "ALTER TABLE {}.{table_name} DELETE WHERE ",
             clickhouse_config.connection.database
@@ -163,16 +159,22 @@ pub trait IntoClickhouse {
 
         let mut conditions = vec![];
 
-        for (index, column) in source_table_info.clickhouse_columns.iter().enumerate() {
-            if !column.is_in_primary_key {
+        for clickhouse_column in clickhouse_columns.iter() {
+            if !clickhouse_column.is_in_primary_key {
                 continue;
             }
 
-            let value = row.columns[index].text_ref_or("");
+            let raw_value =
+                row.find_value_by_column_name(source_columns, &clickhouse_column.column_name);
+
+            let column_value = match raw_value {
+                Some(value) => clickhouse_column.to_clickhouse_value(value),
+                None => clickhouse_column.to_clickhouse_value(PgOutputValue::Null),
+            };
+
             conditions.push(format!(
                 "{} = '{}'",
-                column.column_name,
-                value.replace("'", "''")
+                clickhouse_column.column_name, column_value
             ));
         }
 

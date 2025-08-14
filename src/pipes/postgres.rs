@@ -423,7 +423,8 @@ impl PostgresPipe {
 
                         let delete_query = self.generate_delete_query(
                             &self.clickhouse_config,
-                            source_table_info,
+                            &source_table_info.clickhouse_columns,
+                            &source_table_info.postgres_columns,
                             table_name,
                             &PostgresCopyRow {
                                 columns: parsed_row.payload,
