@@ -158,10 +158,7 @@ impl ClickhouseColumn {
             }
             "Bool" | "Nullable(Bool)" => Self::parse_bool(&value.text_or("false".to_string())),
             "String" | "Nullable(String)" => {
-                format!(
-                    "'{}'",
-                    Self::escape_single_quotes(&value.text_or("".to_string()))
-                )
+                format!("'{}'", Self::escape_string(&value.text_or("".to_string())))
             }
             "Date" | "Date32" | "Nullable(Date)" | "Nullable(Date32)" => format!(
                 "toDate('{}')",
@@ -179,7 +176,7 @@ impl ClickhouseColumn {
                 let text = value.array_value().unwrap_or_default();
                 let array_values = Self::parse_string_array(&text)
                     .into_iter()
-                    .map(|s| format!("'{}'", Self::escape_single_quotes(&s)))
+                    .map(|s| format!("'{}'", Self::escape_string(&s)))
                     .collect::<Vec<String>>();
 
                 format!("[{}]", array_values.join(", "))
@@ -229,8 +226,8 @@ impl ClickhouseColumn {
         items
     }
 
-    pub fn escape_single_quotes(input: &str) -> String {
-        input.replace('\'', "''")
+    pub fn escape_string(input: &str) -> String {
+        input.replace('\'', "''").replace("\\", "\\\\")
     }
 }
 
