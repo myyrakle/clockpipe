@@ -283,6 +283,18 @@ impl IntoClickhouseColumn for PostgresColumn {
             }
         }
     }
+
+    fn get_column_name(&self) -> &str {
+        &self.column_name
+    }
+
+    fn get_comment(&self) -> &str {
+        &self.comment
+    }
+
+    fn is_in_primary_key(&self) -> bool {
+        self.is_primary_key
+    }
 }
 
 #[derive(Debug, Clone, Default)]
