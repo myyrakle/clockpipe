@@ -4,13 +4,13 @@ use crate::{
     adapter::{
         self,
         clickhouse::ClickhouseColumn,
-        mapper::generate_clickhouse_create_table_query,
+        interface::IntoClickhouse,
         postgres::{
             PostgresColumn, PostgresCopyRow,
             pgoutput::{MessageType, parse_pg_output},
         },
     },
-    command,
+    config::Configuraion,
     errors::Errors,
     interface::IPipe,
 };
@@ -212,7 +212,7 @@ impl PostgresPipe {
 
             if clickhouse_table_not_exists {
                 log::info!("Creating ClickHouse table for {}", table.table_name);
-                let create_table_query = generate_clickhouse_create_table_query(
+                let create_table_query = self.generate_create_table_query(
                     &self.clickhouse_config.connection.database,
                     &table.table_name,
                     &postgres_columns,
@@ -288,9 +288,22 @@ impl PostgresPipe {
                 .await
                 .expect("Failed to copy table data from Postgres");
 
+            let schema_name = &table.schema_name;
+            let table_name = &table.table_name;
+            let source_table_info = self
+                .context
+                .tables_map
+                .get(&format!("{schema_name}.{table_name}"))
+                .expect("Table info not found in context");
+
             for chunk in rows.chunks(100000) {
-                let insert_query =
-                    self.generate_insert_query(&table.schema_name, &table.table_name, chunk);
+                let insert_query = self.generate_insert_query(
+                    &self.clickhouse_config,
+                    &source_table_info.clickhouse_columns,
+                    &source_table_info.postgres_columns,
+                    &table.table_name,
+                    chunk,
+                );
 
                 if !insert_query.is_empty() {
                     self.clickhouse_connection
@@ -359,8 +372,16 @@ impl PostgresPipe {
 
                 match parsed_row.message_type {
                     MessageType::Insert | MessageType::Update => {
+                        let source_table_info = self
+                            .context
+                            .tables_map
+                            .get(&format!("{schema_name}.{table_name}"))
+                            .expect("Table info not found in context");
+
                         let insert_query = self.generate_insert_query(
-                            schema_name,
+                            &self.clickhouse_config,
+                            &source_table_info.clickhouse_columns,
+                            &source_table_info.postgres_columns,
                             table_name,
                             &[PostgresCopyRow {
                                 columns: parsed_row.payload,
@@ -394,8 +415,16 @@ impl PostgresPipe {
                         }
                     }
                     MessageType::Delete => {
+                        let source_table_info = self
+                            .context
+                            .tables_map
+                            .get(&format!("{schema_name}.{table_name}"))
+                            .expect("Table info not found in context");
+
                         let delete_query = self.generate_delete_query(
-                            schema_name,
+                            &self.clickhouse_config,
+                            &source_table_info.clickhouse_columns,
+                            &source_table_info.postgres_columns,
                             table_name,
                             &PostgresCopyRow {
                                 columns: parsed_row.payload,
@@ -456,133 +485,9 @@ impl PostgresPipe {
     }
 }
 
-impl PostgresPipe {
-    fn generate_insert_query(
-        &self,
-        schema_name: &str,
-        table_name: &str,
-        rows: &[PostgresCopyRow],
-    ) -> String {
-        if rows.is_empty() {
-            return String::new();
-        }
+impl IntoClickhouse for PostgresPipe {}
 
-        let mut insert_query = format!(
-            "INSERT INTO {}.{table_name} ",
-            self.clickhouse_config.connection.database
-        );
-
-        let table_info = self
-            .context
-            .tables_map
-            .get(&format!("{schema_name}.{table_name}"))
-            .expect("Table info not found in context");
-
-        let mut columns = vec![];
-        let mut column_names = vec![];
-
-        for clickhouse_column in &table_info.clickhouse_columns {
-            let Some(postgres_column) = table_info
-                .postgres_columns
-                .iter()
-                .find(|col| col.column_name == clickhouse_column.column_name)
-            else {
-                continue;
-            };
-
-            columns.push((clickhouse_column.clone(), postgres_column.clone()));
-            column_names.push(clickhouse_column.column_name.clone());
-        }
-
-        insert_query.push_str(&format!("({}) ", column_names.join(", ")));
-        insert_query.push_str("VALUES");
-
-        let mut values = vec![];
-
-        for row in rows {
-            let mut value = vec![];
-
-            for (clickhouse_column, _) in columns.iter() {
-                let Some(postgres_column) = table_info
-                    .postgres_columns
-                    .iter()
-                    .find(|col| col.column_name == clickhouse_column.column_name)
-                else {
-                    log::warn!(
-                        "Postgres column {} not found in ClickHouse table {}. Skipping.",
-                        clickhouse_column.column_name,
-                        table_name
-                    );
-                    continue;
-                };
-
-                let postgres_raw_column_value =
-                    row.columns.get(postgres_column.column_index as usize - 1);
-
-                let column_value = match postgres_raw_column_value {
-                    Some(raw_value) => clickhouse_column.value(raw_value.to_owned()),
-                    _ => clickhouse_column.default_value(),
-                };
-
-                value.push(column_value);
-            }
-
-            let value = value.join(",");
-            values.push(format!("({value})"));
-        }
-
-        insert_query.push_str(values.join(", ").as_str());
-
-        insert_query
-    }
-
-    fn generate_delete_query(
-        &self,
-        schema_name: &str,
-        table_name: &str,
-        row: &PostgresCopyRow,
-    ) -> String {
-        if row.columns.is_empty() {
-            return String::new();
-        }
-
-        let mut delete_query = format!(
-            "ALTER TABLE {}.{table_name} DELETE WHERE ",
-            self.clickhouse_config.connection.database
-        );
-
-        let table_info = self
-            .context
-            .tables_map
-            .get(&format!("{schema_name}.{table_name}"))
-            .expect("Table info not found in context");
-
-        let mut conditions = vec![];
-
-        for (index, column) in table_info.clickhouse_columns.iter().enumerate() {
-            if !column.is_in_primary_key {
-                continue;
-            }
-
-            let value = row.columns[index].text_ref_or("");
-            conditions.push(format!(
-                "{} = '{}'",
-                column.column_name,
-                value.replace("'", "''")
-            ));
-        }
-
-        delete_query.push_str(&conditions.join(" AND "));
-
-        delete_query
-    }
-}
-
-pub async fn run_postgres_pipe(config_options: &command::run::ConfigOptions) {
-    let config = config_options
-        .read_config_from_file()
-        .expect("Failed to read configuration");
-
+pub async fn run_postgres_pipe(config: &Configuraion) {
     let mut pipe = PostgresPipe::new(
         config
             .source

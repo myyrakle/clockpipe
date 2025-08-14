@@ -3,7 +3,7 @@ use std::io::Read;
 use byteorder::ReadBytesExt;
 use serde::{Deserialize, Serialize};
 
-use crate::errors;
+use crate::{adapter::interface::IntoClickhouseValue, errors};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[repr(u8)]
@@ -76,7 +76,84 @@ pub enum PgOutputValue {
     Binary(Vec<u8>),
 }
 
+impl IntoClickhouseValue for PgOutputValue {
+    fn to_integer(self) -> String {
+        self.text_or("0".to_string())
+    }
+
+    fn to_real(self) -> String {
+        self.text_or("0.0".to_string())
+    }
+
+    fn to_bool(self) -> String {
+        Self::parse_bool(&self.text_or("false".to_string()))
+    }
+
+    fn to_string(self) -> String {
+        format!("'{}'", Self::escape_string(&self.text_or("".to_string())))
+    }
+
+    fn to_date(self) -> String {
+        format!(
+            "toDate('{}')",
+            Self::cut_millisecond(&self.text_or("current_date()".to_string()))
+        )
+    }
+
+    fn to_datetime(self) -> String {
+        format!(
+            "toDateTime('{}')",
+            Self::cut_millisecond(&self.text_or("now()".to_string()))
+        )
+    }
+
+    fn to_time(self) -> String {
+        format!(
+            "toTime('{}')",
+            Self::cut_millisecond(&self.text_or("now()".to_string()))
+        )
+    }
+
+    fn to_array(self) -> String {
+        format!("[{}]", self.array_value().unwrap_or_default(),)
+    }
+
+    fn to_string_array(self) -> String {
+        let text = self.array_value().unwrap_or_default();
+        let array_values = Self::parse_string_array(&text)
+            .into_iter()
+            .map(|s| format!("'{}'", Self::escape_string(&s)))
+            .collect::<Vec<String>>();
+
+        format!("[{}]", array_values.join(", "))
+    }
+
+    fn is_null(&self) -> bool {
+        matches!(self, PgOutputValue::Null)
+    }
+
+    fn unknown_value(self) -> String {
+        self.text_or("NULL".to_string())
+    }
+}
+
 impl PgOutputValue {
+    pub fn cut_millisecond(date_text: &str) -> String {
+        if let Some(pos) = date_text.find('.') {
+            date_text[..pos].to_string()
+        } else {
+            date_text.to_string()
+        }
+    }
+
+    pub fn parse_bool(value: &str) -> String {
+        match value.to_lowercase().as_str() {
+            "t" | "1" | "true" => "TRUE".to_string(),
+            "f" | "0" | "false" => "FALSE".to_string(),
+            _ => "FALSE".to_string(),
+        }
+    }
+
     pub fn is_null(&self) -> bool {
         matches!(self, PgOutputValue::Null)
     }
@@ -105,6 +182,18 @@ impl PgOutputValue {
         } else {
             None
         }
+    }
+
+    pub fn escape_string(input: &str) -> String {
+        input.replace('\'', "''").replace("\\", "\\\\")
+    }
+
+    pub fn parse_string_array(value: &str) -> Vec<String> {
+        let value = value.trim_matches(|c| c == '{' || c == '}');
+
+        let trimmed = value.trim_matches('"');
+        let items: Vec<String> = trimmed.split("\",\"").map(|s| s.to_string()).collect();
+        items
     }
 }
 
@@ -245,17 +334,13 @@ fn parse_pg_output_write(message_type: MessageType, bytes: &[u8]) -> errors::Res
             b'b' => {
                 // Binary value
                 let length = cursor.read_u32::<byteorder::BigEndian>().map_err(|e| {
-                    errors::Errors::PgOutputParseError(format!(
-                        "Failed to read binary length: {e}"
-                    ))
+                    errors::Errors::PgOutputParseError(format!("Failed to read binary length: {e}"))
                 })?;
 
                 let mut buffer = vec![0u8; length as usize];
 
                 cursor.read_exact(&mut buffer).map_err(|e| {
-                    errors::Errors::PgOutputParseError(format!(
-                        "Failed to read binary value: {e}"
-                    ))
+                    errors::Errors::PgOutputParseError(format!("Failed to read binary value: {e}"))
                 })?;
 
                 pg_output.payload.push(PgOutputValue::Binary(buffer));
@@ -270,4 +355,47 @@ fn parse_pg_output_write(message_type: MessageType, bytes: &[u8]) -> errors::Res
     }
 
     Ok(pg_output)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::adapter::postgres::pgoutput::PgOutputValue;
+
+    #[test]
+    fn test_parse_string_array() {
+        struct TestCase {
+            input: &'static str,
+            expected: Vec<String>,
+        }
+
+        let test_cases = vec![
+            TestCase {
+                input: "{\"Flower design\",\"Pearl embellishments\",\"Stud earrings\",\"Gold accents\",\"Pearl accents\",\"Diamond accents\"}",
+                expected: vec![
+                    "Flower design".to_string(),
+                    "Pearl embellishments".to_string(),
+                    "Stud earrings".to_string(),
+                    "Gold accents".to_string(),
+                    "Pearl accents".to_string(),
+                    "Diamond accents".to_string(),
+                ],
+            },
+            TestCase {
+                input: "{\"Button closure\",\"White stripes on collar, cuffs, and hem\"}",
+                expected: vec![
+                    "Button closure".to_string(),
+                    "White stripes on collar, cuffs, and hem".to_string(),
+                ],
+            },
+        ];
+
+        for test_case in test_cases {
+            let result = PgOutputValue::parse_string_array(test_case.input);
+            assert_eq!(
+                result, test_case.expected,
+                "Failed for input: {}",
+                test_case.input
+            );
+        }
+    }
 }

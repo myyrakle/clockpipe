@@ -2,7 +2,11 @@ use sqlx::postgres::PgConnectOptions;
 pub mod pgoutput;
 
 use crate::{
-    adapter::{clickhouse::ClickhouseType, postgres::pgoutput::PgOutputValue},
+    adapter::{
+        clickhouse::ClickhouseType,
+        interface::{IntoClickhouseColumn, IntoClickhouseRow, IntoClickhouseValue},
+        postgres::pgoutput::PgOutputValue,
+    },
     config::PostgresConnectionConfig,
     errors,
 };
@@ -182,8 +186,8 @@ pub struct PostgresColumn {
     pub comment: String,
 }
 
-impl PostgresColumn {
-    pub fn convert_to_clickhouse_type(&self) -> ClickhouseType {
+impl IntoClickhouseColumn for PostgresColumn {
+    fn to_clickhouse_type(&self) -> ClickhouseType {
         match self.data_type.as_str() {
             "int2" => {
                 if self.nullable {
@@ -281,11 +285,48 @@ impl PostgresColumn {
             }
         }
     }
+
+    fn get_column_name(&self) -> &str {
+        &self.column_name
+    }
+
+    fn get_column_index(&self) -> usize {
+        self.column_index as usize
+    }
+
+    fn get_comment(&self) -> &str {
+        &self.comment
+    }
+
+    fn is_in_primary_key(&self) -> bool {
+        self.is_primary_key
+    }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct PostgresCopyRow {
     pub columns: Vec<PgOutputValue>,
+}
+
+impl IntoClickhouseRow for PostgresCopyRow {
+    fn find_value_by_column_name(
+        &self,
+        source_columns: &[impl IntoClickhouseColumn],
+        column_name: &str,
+    ) -> Option<impl IntoClickhouseValue> {
+        let Some(source_column) = source_columns
+            .iter()
+            .find(|col| col.get_column_name() == column_name)
+        else {
+            return Some(PgOutputValue::Null);
+        };
+
+        let index = source_column.get_column_index() - 1; // Convert to 0-based index
+
+        let postgres_raw_column_value = self.columns.get(index);
+
+        postgres_raw_column_value.map(ToOwned::to_owned)
+    }
 }
 
 impl PostgresConnection {
