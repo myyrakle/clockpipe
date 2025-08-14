@@ -132,4 +132,40 @@ pub trait IntoClickhouse {
 
         insert_query
     }
+
+    fn generate_delete_query(
+        &self,
+        clickhouse_config: &ClickHouseConfig,
+        source_table_info: &PostgresPipeTableInfo,
+        table_name: &str,
+        row: &PostgresCopyRow,
+    ) -> String {
+        if row.columns.is_empty() {
+            return String::new();
+        }
+
+        let mut delete_query = format!(
+            "ALTER TABLE {}.{table_name} DELETE WHERE ",
+            clickhouse_config.connection.database
+        );
+
+        let mut conditions = vec![];
+
+        for (index, column) in source_table_info.clickhouse_columns.iter().enumerate() {
+            if !column.is_in_primary_key {
+                continue;
+            }
+
+            let value = row.columns[index].text_ref_or("");
+            conditions.push(format!(
+                "{} = '{}'",
+                column.column_name,
+                value.replace("'", "''")
+            ));
+        }
+
+        delete_query.push_str(&conditions.join(" AND "));
+
+        delete_query
+    }
 }

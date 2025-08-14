@@ -413,8 +413,15 @@ impl PostgresPipe {
                         }
                     }
                     MessageType::Delete => {
+                        let source_table_info = self
+                            .context
+                            .tables_map
+                            .get(&format!("{schema_name}.{table_name}"))
+                            .expect("Table info not found in context");
+
                         let delete_query = self.generate_delete_query(
-                            schema_name,
+                            &self.clickhouse_config,
+                            source_table_info,
                             table_name,
                             &PostgresCopyRow {
                                 columns: parsed_row.payload,
@@ -476,49 +483,6 @@ impl PostgresPipe {
 }
 
 impl IntoClickhouse for PostgresPipe {}
-
-impl PostgresPipe {
-    fn generate_delete_query(
-        &self,
-        schema_name: &str,
-        table_name: &str,
-        row: &PostgresCopyRow,
-    ) -> String {
-        if row.columns.is_empty() {
-            return String::new();
-        }
-
-        let mut delete_query = format!(
-            "ALTER TABLE {}.{table_name} DELETE WHERE ",
-            self.clickhouse_config.connection.database
-        );
-
-        let table_info = self
-            .context
-            .tables_map
-            .get(&format!("{schema_name}.{table_name}"))
-            .expect("Table info not found in context");
-
-        let mut conditions = vec![];
-
-        for (index, column) in table_info.clickhouse_columns.iter().enumerate() {
-            if !column.is_in_primary_key {
-                continue;
-            }
-
-            let value = row.columns[index].text_ref_or("");
-            conditions.push(format!(
-                "{} = '{}'",
-                column.column_name,
-                value.replace("'", "''")
-            ));
-        }
-
-        delete_query.push_str(&conditions.join(" AND "));
-
-        delete_query
-    }
-}
 
 pub async fn run_postgres_pipe(config_options: &command::run::ConfigOptions) {
     let config = config_options
