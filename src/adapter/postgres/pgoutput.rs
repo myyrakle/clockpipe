@@ -67,9 +67,10 @@ pub struct PgOutput {
     pub payload: Vec<PgOutputValue>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum PgOutputValue {
     Unit,
+    #[default]
     Null,
     Unchanged,
     Text(String),
