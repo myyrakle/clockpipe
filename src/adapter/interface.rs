@@ -144,14 +144,18 @@ pub trait IntoClickhouse {
         insert_query
     }
 
-    fn generate_delete_query(
+    fn generate_delete_query<IntoClickhouseColumnType, IntoClickhouseRowType>(
         &self,
         clickhouse_config: &ClickHouseConfig,
         clickhouse_columns: &[ClickhouseColumn],
-        source_columns: &[impl IntoClickhouseColumn],
+        source_columns: &[IntoClickhouseColumnType],
         table_name: &str,
-        row: &impl IntoClickhouseRow,
-    ) -> String {
+        row: &IntoClickhouseRowType,
+    ) -> String
+    where
+        IntoClickhouseColumnType: IntoClickhouseColumn,
+        IntoClickhouseRowType: IntoClickhouseRow,
+    {
         let mut delete_query = format!(
             "ALTER TABLE {}.{table_name} DELETE WHERE ",
             clickhouse_config.connection.database
@@ -164,7 +168,7 @@ pub trait IntoClickhouse {
                 continue;
             }
 
-            let raw_value =
+            let raw_value: Option<_> =
                 row.find_value_by_column_name(source_columns, &clickhouse_column.column_name);
 
             let column_value = match raw_value {
@@ -173,7 +177,7 @@ pub trait IntoClickhouse {
             };
 
             conditions.push(format!(
-                "{} = '{}'",
+                "{} = {}",
                 clickhouse_column.column_name, column_value
             ));
         }
