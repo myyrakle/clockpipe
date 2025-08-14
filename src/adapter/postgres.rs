@@ -4,7 +4,7 @@ pub mod pgoutput;
 use crate::{
     adapter::{
         clickhouse::ClickhouseType,
-        interface::{IntoClickhouseColumn, IntoClickhouseRow, IntoClickhouseValue},
+        convert::{IntoClickhouseColumn, IntoClickhouseRow, IntoClickhouseValue},
         postgres::pgoutput::PgOutputValue,
     },
     config::PostgresConnectionConfig,
