@@ -8,7 +8,7 @@ use crate::{
 };
 
 pub trait IntoClickhouseColumn {
-    fn into_clickhouse_type(&self) -> ClickhouseType;
+    fn to_clickhouse_type(&self) -> ClickhouseType;
     fn get_column_name(&self) -> &str;
     fn get_column_index(&self) -> usize;
     fn get_comment(&self) -> &str;
@@ -51,7 +51,7 @@ pub trait IntoClickhouse {
         let column_definitions: Vec<String> = columns
             .iter()
             .map(|col| {
-                let clickhouse_type = col.into_clickhouse_type();
+                let clickhouse_type = col.to_clickhouse_type();
                 format!(
                     "`{}` {} COMMENT '{}'",
                     col.get_column_name(),

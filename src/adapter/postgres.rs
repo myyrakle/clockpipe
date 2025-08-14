@@ -187,7 +187,7 @@ pub struct PostgresColumn {
 }
 
 impl IntoClickhouseColumn for PostgresColumn {
-    fn into_clickhouse_type(&self) -> ClickhouseType {
+    fn to_clickhouse_type(&self) -> ClickhouseType {
         match self.data_type.as_str() {
             "int2" => {
                 if self.nullable {

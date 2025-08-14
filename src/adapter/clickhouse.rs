@@ -74,12 +74,12 @@ impl ClickhouseType {
             ClickhouseType::Float64 => "Float64".to_string(),
             ClickhouseType::Bool => "Bool".to_string(),
             ClickhouseType::String => "String".to_string(),
-            ClickhouseType::FixedString(size) => format!("FixedString({})", size),
+            ClickhouseType::FixedString(size) => format!("FixedString({size})"),
             ClickhouseType::Decimal => "Decimal".to_string(),
             ClickhouseType::Date => "Date".to_string(),
             ClickhouseType::Date32 => "Date32".to_string(),
             ClickhouseType::Time => "Time".to_string(),
-            ClickhouseType::Time64(precision) => format!("Time64({})", precision),
+            ClickhouseType::Time64(precision) => format!("Time64({precision})"),
             ClickhouseType::DateTime(datetime) => datetime.to_type_text(),
             ClickhouseType::DateTime64(datetime64) => datetime64.to_type_text(),
             ClickhouseType::UUID => "UUID".to_string(),
@@ -99,7 +99,7 @@ pub struct DateTime {
 impl DateTime {
     pub fn to_type_text(&self) -> String {
         match &self.timezone {
-            Some(tz) => format!("DateTime('{}')", tz),
+            Some(tz) => format!("DateTime('{tz}')"),
             None => "DateTime".to_string(),
         }
     }

@@ -197,49 +197,6 @@ impl PgOutputValue {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::adapter::postgres::pgoutput::PgOutputValue;
-
-    #[test]
-    fn test_parse_string_array() {
-        struct TestCase {
-            input: &'static str,
-            expected: Vec<String>,
-        }
-
-        let test_cases = vec![
-            TestCase {
-                input: "{\"Flower design\",\"Pearl embellishments\",\"Stud earrings\",\"Gold accents\",\"Pearl accents\",\"Diamond accents\"}",
-                expected: vec![
-                    "Flower design".to_string(),
-                    "Pearl embellishments".to_string(),
-                    "Stud earrings".to_string(),
-                    "Gold accents".to_string(),
-                    "Pearl accents".to_string(),
-                    "Diamond accents".to_string(),
-                ],
-            },
-            TestCase {
-                input: "{\"Button closure\",\"White stripes on collar, cuffs, and hem\"}",
-                expected: vec![
-                    "Button closure".to_string(),
-                    "White stripes on collar, cuffs, and hem".to_string(),
-                ],
-            },
-        ];
-
-        for test_case in test_cases {
-            let result = PgOutputValue::parse_string_array(test_case.input);
-            assert_eq!(
-                result, test_case.expected,
-                "Failed for input: {}",
-                test_case.input
-            );
-        }
-    }
-}
-
 pub fn parse_pg_output(bytes: &[u8]) -> errors::Result<Option<PgOutput>> {
     let first_byte = bytes.first().cloned().unwrap_or(0);
     let message_type =
@@ -398,4 +355,47 @@ fn parse_pg_output_write(message_type: MessageType, bytes: &[u8]) -> errors::Res
     }
 
     Ok(pg_output)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::adapter::postgres::pgoutput::PgOutputValue;
+
+    #[test]
+    fn test_parse_string_array() {
+        struct TestCase {
+            input: &'static str,
+            expected: Vec<String>,
+        }
+
+        let test_cases = vec![
+            TestCase {
+                input: "{\"Flower design\",\"Pearl embellishments\",\"Stud earrings\",\"Gold accents\",\"Pearl accents\",\"Diamond accents\"}",
+                expected: vec![
+                    "Flower design".to_string(),
+                    "Pearl embellishments".to_string(),
+                    "Stud earrings".to_string(),
+                    "Gold accents".to_string(),
+                    "Pearl accents".to_string(),
+                    "Diamond accents".to_string(),
+                ],
+            },
+            TestCase {
+                input: "{\"Button closure\",\"White stripes on collar, cuffs, and hem\"}",
+                expected: vec![
+                    "Button closure".to_string(),
+                    "White stripes on collar, cuffs, and hem".to_string(),
+                ],
+            },
+        ];
+
+        for test_case in test_cases {
+            let result = PgOutputValue::parse_string_array(test_case.input);
+            assert_eq!(
+                result, test_case.expected,
+                "Failed for input: {}",
+                test_case.input
+            );
+        }
+    }
 }
