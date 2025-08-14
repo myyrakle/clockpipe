@@ -2,7 +2,9 @@ use sqlx::postgres::PgConnectOptions;
 pub mod pgoutput;
 
 use crate::{
-    adapter::{clickhouse::ClickhouseType, postgres::pgoutput::PgOutputValue},
+    adapter::{
+        clickhouse::ClickhouseType, mapper::IntoClickhouseColumn, postgres::pgoutput::PgOutputValue,
+    },
     config::PostgresConnectionConfig,
     errors,
 };
@@ -182,8 +184,8 @@ pub struct PostgresColumn {
     pub comment: String,
 }
 
-impl PostgresColumn {
-    pub fn convert_to_clickhouse_type(&self) -> ClickhouseType {
+impl IntoClickhouseColumn for PostgresColumn {
+    fn into_clickhouse_type(&self) -> ClickhouseType {
         match self.data_type.as_str() {
             "int2" => {
                 if self.nullable {
