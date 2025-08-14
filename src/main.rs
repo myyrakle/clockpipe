@@ -23,7 +23,16 @@ async fn main() {
         command::SubCommand::Run(command) => {
             log::info!("config-file: {}", command.value.config_file);
 
-            pipes::run_postgres_pipe(&command.value).await;
+            let config = command
+                .value
+                .read_config_from_file()
+                .expect("Failed to read configuration");
+
+            match config.source.source_type {
+                config::SourceType::Postgres => {
+                    pipes::run_postgres_pipe(&config).await;
+                }
+            }
         }
     }
 }

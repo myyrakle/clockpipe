@@ -10,7 +10,7 @@ use crate::{
             pgoutput::{MessageType, parse_pg_output},
         },
     },
-    command,
+    config::Configuraion,
     errors::Errors,
     interface::IPipe,
 };
@@ -484,11 +484,7 @@ impl PostgresPipe {
 
 impl IntoClickhouse for PostgresPipe {}
 
-pub async fn run_postgres_pipe(config_options: &command::run::ConfigOptions) {
-    let config = config_options
-        .read_config_from_file()
-        .expect("Failed to read configuration");
-
+pub async fn run_postgres_pipe(config: &Configuraion) {
     let mut pipe = PostgresPipe::new(
         config
             .source
