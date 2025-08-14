@@ -3,7 +3,7 @@ use std::io::Read;
 use byteorder::ReadBytesExt;
 use serde::{Deserialize, Serialize};
 
-use crate::{adapter::interface::IntoClickhouseValue, errors};
+use crate::{adapter::convert::IntoClickhouseValue, errors};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[repr(u8)]
@@ -67,9 +67,10 @@ pub struct PgOutput {
     pub payload: Vec<PgOutputValue>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum PgOutputValue {
     Unit,
+    #[default]
     Null,
     Unchanged,
     Text(String),

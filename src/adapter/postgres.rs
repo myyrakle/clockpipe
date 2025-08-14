@@ -4,7 +4,7 @@ pub mod pgoutput;
 use crate::{
     adapter::{
         clickhouse::ClickhouseType,
-        interface::{IntoClickhouseColumn, IntoClickhouseRow, IntoClickhouseValue},
+        convert::{IntoClickhouseColumn, IntoClickhouseRow, IntoClickhouseValue},
         postgres::pgoutput::PgOutputValue,
     },
     config::PostgresConnectionConfig,
@@ -313,7 +313,7 @@ impl IntoClickhouseRow for PostgresCopyRow {
         &self,
         source_columns: &[impl IntoClickhouseColumn],
         column_name: &str,
-    ) -> Option<impl IntoClickhouseValue> {
+    ) -> Option<impl IntoClickhouseValue + Default> {
         let Some(source_column) = source_columns
             .iter()
             .find(|col| col.get_column_name() == column_name)

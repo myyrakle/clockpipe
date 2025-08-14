@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{adapter::interface::IntoClickhouseValue, errors};
+use crate::{adapter::convert::IntoClickhouseValue, errors};
 
 #[derive(Clone)]
 pub struct ClickhouseConnection {

@@ -1,8 +1,5 @@
 use crate::{
-    adapter::{
-        clickhouse::{ClickhouseColumn, ClickhouseType},
-        postgres::pgoutput::PgOutputValue,
-    },
+    adapter::clickhouse::{ClickhouseColumn, ClickhouseType},
     config::ClickHouseConfig,
 };
 
@@ -19,7 +16,7 @@ pub trait IntoClickhouseRow {
         &self,
         source_columns: &[impl IntoClickhouseColumn],
         column_name: &str,
-    ) -> Option<impl IntoClickhouseValue>;
+    ) -> Option<impl IntoClickhouseValue + Default>;
 }
 
 pub trait IntoClickhouseValue {
@@ -127,10 +124,8 @@ pub trait IntoClickhouse {
                 let raw_value =
                     row.find_value_by_column_name(source_columns, &clickhouse_column.column_name);
 
-                let column_value = match raw_value {
-                    Some(value) => clickhouse_column.to_clickhouse_value(value),
-                    None => clickhouse_column.to_clickhouse_value(PgOutputValue::Null),
-                };
+                let column_value =
+                    clickhouse_column.to_clickhouse_value(raw_value.unwrap_or_default());
 
                 value.push(column_value);
             }
@@ -171,10 +166,7 @@ pub trait IntoClickhouse {
             let raw_value: Option<_> =
                 row.find_value_by_column_name(source_columns, &clickhouse_column.column_name);
 
-            let column_value = match raw_value {
-                Some(value) => clickhouse_column.to_clickhouse_value(value),
-                None => clickhouse_column.to_clickhouse_value(PgOutputValue::Null),
-            };
+            let column_value = clickhouse_column.to_clickhouse_value(raw_value.unwrap_or_default());
 
             conditions.push(format!(
                 "{} = {}",
