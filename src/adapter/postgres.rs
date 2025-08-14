@@ -3,7 +3,9 @@ pub mod pgoutput;
 
 use crate::{
     adapter::{
-        clickhouse::ClickhouseType, mapper::IntoClickhouseColumn, postgres::pgoutput::PgOutputValue,
+        clickhouse::ClickhouseType,
+        mapper::{IntoClickhouseColumn, IntoClickhouseRow, IntoClickhouseValue},
+        postgres::pgoutput::PgOutputValue,
     },
     config::PostgresConnectionConfig,
     errors,
@@ -288,6 +290,10 @@ impl IntoClickhouseColumn for PostgresColumn {
         &self.column_name
     }
 
+    fn get_column_index(&self) -> usize {
+        self.column_index as usize
+    }
+
     fn get_comment(&self) -> &str {
         &self.comment
     }
@@ -300,6 +306,27 @@ impl IntoClickhouseColumn for PostgresColumn {
 #[derive(Debug, Clone, Default)]
 pub struct PostgresCopyRow {
     pub columns: Vec<PgOutputValue>,
+}
+
+impl IntoClickhouseRow for PostgresCopyRow {
+    fn find_value_by_column_name(
+        &self,
+        source_columns: &[impl IntoClickhouseColumn],
+        column_name: &str,
+    ) -> Option<impl IntoClickhouseValue> {
+        let Some(source_column) = source_columns
+            .iter()
+            .find(|col| col.get_column_name() == column_name)
+        else {
+            return Some(PgOutputValue::Null);
+        };
+
+        let index = source_column.get_column_index() - 1; // Convert to 0-based index
+
+        let postgres_raw_column_value = self.columns.get(index);
+
+        postgres_raw_column_value.map(ToOwned::to_owned)
+    }
 }
 
 impl PostgresConnection {

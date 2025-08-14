@@ -1,5 +1,8 @@
 use crate::{
-    adapter::{clickhouse::ClickhouseType, postgres::PostgresCopyRow},
+    adapter::{
+        clickhouse::{ClickhouseColumn, ClickhouseType},
+        postgres::{PostgresCopyRow, pgoutput::PgOutputValue},
+    },
     config::ClickHouseConfig,
     pipes::PostgresPipeTableInfo,
 };
@@ -7,11 +10,33 @@ use crate::{
 pub trait IntoClickhouseColumn {
     fn into_clickhouse_type(&self) -> ClickhouseType;
     fn get_column_name(&self) -> &str;
+    fn get_column_index(&self) -> usize;
     fn get_comment(&self) -> &str;
     fn is_in_primary_key(&self) -> bool;
 }
 
-pub trait IntoClickhouseRow {}
+pub trait IntoClickhouseRow {
+    fn find_value_by_column_name(
+        &self,
+        source_columns: &[impl IntoClickhouseColumn],
+        column_name: &str,
+    ) -> Option<impl IntoClickhouseValue>;
+}
+
+pub trait IntoClickhouseValue {
+    fn to_integer(self) -> String;
+    fn to_real(self) -> String;
+    fn to_bool(self) -> String;
+    fn to_string(self) -> String;
+    fn to_date(self) -> String;
+    fn to_datetime(self) -> String;
+    fn to_time(self) -> String;
+    fn to_array(self) -> String;
+    fn to_string_array(self) -> String;
+    fn unknown_value(self) -> String;
+
+    fn is_null(&self) -> bool;
+}
 
 pub trait IntoClickhouse {
     fn generate_create_table_query(
@@ -62,9 +87,10 @@ pub trait IntoClickhouse {
     fn generate_insert_query(
         &self,
         clickhouse_config: &ClickHouseConfig,
-        source_table_info: &PostgresPipeTableInfo,
+        clickhouse_columns: &[ClickhouseColumn],
+        source_columns: &[impl IntoClickhouseColumn],
         table_name: &str,
-        rows: &[PostgresCopyRow],
+        rows: &[impl IntoClickhouseRow],
     ) -> String {
         if rows.is_empty() {
             return String::new();
@@ -78,16 +104,15 @@ pub trait IntoClickhouse {
         let mut columns = vec![];
         let mut column_names = vec![];
 
-        for clickhouse_column in &source_table_info.clickhouse_columns {
-            let Some(postgres_column) = source_table_info
-                .postgres_columns
+        for clickhouse_column in clickhouse_columns {
+            let Some(postgres_column) = source_columns
                 .iter()
-                .find(|col| col.column_name == clickhouse_column.column_name)
+                .find(|col| col.get_column_name() == clickhouse_column.column_name)
             else {
                 continue;
             };
 
-            columns.push((clickhouse_column.clone(), postgres_column.clone()));
+            columns.push((clickhouse_column.clone(), postgres_column));
             column_names.push(clickhouse_column.column_name.clone());
         }
 
@@ -100,25 +125,12 @@ pub trait IntoClickhouse {
             let mut value = vec![];
 
             for (clickhouse_column, _) in columns.iter() {
-                let Some(postgres_column) = source_table_info
-                    .postgres_columns
-                    .iter()
-                    .find(|col| col.column_name == clickhouse_column.column_name)
-                else {
-                    log::warn!(
-                        "Postgres column {} not found in ClickHouse table {}. Skipping.",
-                        clickhouse_column.column_name,
-                        table_name
-                    );
-                    continue;
-                };
+                let raw_value =
+                    row.find_value_by_column_name(source_columns, &clickhouse_column.column_name);
 
-                let postgres_raw_column_value =
-                    row.columns.get(postgres_column.column_index as usize - 1);
-
-                let column_value = match postgres_raw_column_value {
-                    Some(raw_value) => clickhouse_column.value(raw_value.to_owned()),
-                    _ => clickhouse_column.default_value(),
+                let column_value = match raw_value {
+                    Some(value) => clickhouse_column.to_clickhouse_value(value),
+                    None => clickhouse_column.to_clickhouse_value(PgOutputValue::Null),
                 };
 
                 value.push(column_value);

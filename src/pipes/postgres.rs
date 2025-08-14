@@ -299,7 +299,8 @@ impl PostgresPipe {
             for chunk in rows.chunks(100000) {
                 let insert_query = self.generate_insert_query(
                     &self.clickhouse_config,
-                    &source_table_info,
+                    &source_table_info.clickhouse_columns,
+                    &source_table_info.postgres_columns,
                     &table.table_name,
                     chunk,
                 );
@@ -379,7 +380,8 @@ impl PostgresPipe {
 
                         let insert_query = self.generate_insert_query(
                             &self.clickhouse_config,
-                            source_table_info,
+                            &source_table_info.clickhouse_columns,
+                            &source_table_info.postgres_columns,
                             table_name,
                             &[PostgresCopyRow {
                                 columns: parsed_row.payload,

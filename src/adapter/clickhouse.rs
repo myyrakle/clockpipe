@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{adapter::postgres::pgoutput::PgOutputValue, errors};
+use crate::{adapter::mapper::IntoClickhouseValue, errors};
 
 #[derive(Clone)]
 pub struct ClickhouseConnection {
@@ -121,153 +121,35 @@ impl DateTime64 {
 }
 
 impl ClickhouseColumn {
-    pub fn default_value(&self) -> String {
-        match self.data_type.as_str() {
-            "Int8" | "Int16" | "Int32" | "Int64" => "0".to_string(),
-            "Float32" | "Float64" => "0.0".to_string(),
-            "Bool" => "false".to_string(),
-            "String" => "''".to_string(),
-            "Decimal" => "0.0".to_string(),
-            "Date" | "Date32" => "current_date()".to_string(),
-            "DateTime" | "DateTime64" => "now()".to_string(),
-            "Time" | "Time64" => "now()".to_string(),
-            _ => {
-                if self.data_type.starts_with("Array") {
-                    "[]".to_string()
-                } else if self.data_type.starts_with("Date") {
-                    "now()".to_string()
-                } else if self.data_type.starts_with("Time") {
-                    "now()".to_string()
-                } else {
-                    "NULL".to_string() // Default for unknown types
-                }
-            }
-        }
-    }
-
-    pub fn value(&self, value: PgOutputValue) -> String {
+    pub fn to_clickhouse_value(&self, value: impl IntoClickhouseValue) -> String {
         if value.is_null() & self.data_type.starts_with("Nullable") {
             return "NULL".to_string();
         }
 
         match self.data_type.as_str() {
             "Int8" | "Int16" | "Int32" | "Int64" | "Nullable(Int8)" | "Nullable(Int16)"
-            | "Nullable(Int32)" | "Nullable(Int64)" => value.text_or("0".to_string()),
-            "Float32" | "Float64" | "Nullable(Float32)" | "Nullable(Float64)" => {
-                value.text_or("0.0".to_string())
+            | "Nullable(Int32)" | "Nullable(Int64)" => value.to_integer(),
+            "Float32" | "Float64" | "Nullable(Float32)" | "Nullable(Float64)" => value.to_real(),
+            "Bool" | "Nullable(Bool)" => value.to_bool(),
+            "String" | "Nullable(String)" => value.to_string(),
+            "Date" | "Date32" | "Nullable(Date)" | "Nullable(Date32)" => value.to_date(),
+            "DateTime" | "DateTime64" | "Nullable(DateTime)" | "Nullable(DateTime64)" => {
+                value.to_real()
             }
-            "Bool" | "Nullable(Bool)" => Self::parse_bool(&value.text_or("false".to_string())),
-            "String" | "Nullable(String)" => {
-                format!("'{}'", Self::escape_string(&value.text_or("".to_string())))
-            }
-            "Date" | "Date32" | "Nullable(Date)" | "Nullable(Date32)" => format!(
-                "toDate('{}')",
-                Self::cut_millisecond(&value.text_or("current_date()".to_string()))
-            ),
-            "DateTime" | "DateTime64" | "Nullable(DateTime)" | "Nullable(DateTime64)" => format!(
-                "toDateTime('{}')",
-                Self::cut_millisecond(&value.text_or("now()".to_string()))
-            ),
-            "Time" | "Time64" | "Nullable(Time)" | "Nullable(Time64)" => format!(
-                "toTime('{}')",
-                Self::cut_millisecond(&value.text_or("now()".to_string()))
-            ),
-            "Array(String)" => {
-                let text = value.array_value().unwrap_or_default();
-                let array_values = Self::parse_string_array(&text)
-                    .into_iter()
-                    .map(|s| format!("'{}'", Self::escape_string(&s)))
-                    .collect::<Vec<String>>();
-
-                format!("[{}]", array_values.join(", "))
-            }
-            "Decimal" | "Nullable(Decimal)" => value.text_or("0.0".to_string()),
+            "Time" | "Time64" | "Nullable(Time)" | "Nullable(Time64)" => value.to_time(),
+            "Array(String)" => value.to_string_array(),
+            "Decimal" | "Nullable(Decimal)" => value.to_real(),
             _ => {
                 if self.data_type.starts_with("Array") {
-                    format!("[{}]", value.array_value().unwrap_or_default(),)
+                    value.to_array()
                 } else if self.data_type.contains("DateTime") {
-                    format!(
-                        "toDateTime('{}')",
-                        Self::cut_millisecond(&value.text_or("now()".to_string()))
-                    )
+                    value.to_datetime()
                 } else if self.data_type.contains("Time") {
-                    format!(
-                        "toTime('{}')",
-                        Self::cut_millisecond(&value.text_or("now()".to_string()))
-                    )
+                    value.to_time()
                 } else {
-                    value.text_or("NULL".to_string())
+                    value.unknown_value()
                 }
             }
-        }
-    }
-
-    pub fn cut_millisecond(date_text: &str) -> String {
-        if let Some(pos) = date_text.find('.') {
-            date_text[..pos].to_string()
-        } else {
-            date_text.to_string()
-        }
-    }
-
-    pub fn parse_bool(value: &str) -> String {
-        match value.to_lowercase().as_str() {
-            "t" | "1" | "true" => "TRUE".to_string(),
-            "f" | "0" | "false" => "FALSE".to_string(),
-            _ => "FALSE".to_string(),
-        }
-    }
-
-    pub fn parse_string_array(value: &str) -> Vec<String> {
-        let value = value.trim_matches(|c| c == '{' || c == '}');
-
-        let trimmed = value.trim_matches('"');
-        let items: Vec<String> = trimmed.split("\",\"").map(|s| s.to_string()).collect();
-        items
-    }
-
-    pub fn escape_string(input: &str) -> String {
-        input.replace('\'', "''").replace("\\", "\\\\")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_parse_string_array() {
-        struct TestCase {
-            input: &'static str,
-            expected: Vec<String>,
-        }
-
-        let test_cases = vec![
-            TestCase {
-                input: "{\"Flower design\",\"Pearl embellishments\",\"Stud earrings\",\"Gold accents\",\"Pearl accents\",\"Diamond accents\"}",
-                expected: vec![
-                    "Flower design".to_string(),
-                    "Pearl embellishments".to_string(),
-                    "Stud earrings".to_string(),
-                    "Gold accents".to_string(),
-                    "Pearl accents".to_string(),
-                    "Diamond accents".to_string(),
-                ],
-            },
-            TestCase {
-                input: "{\"Button closure\",\"White stripes on collar, cuffs, and hem\"}",
-                expected: vec![
-                    "Button closure".to_string(),
-                    "White stripes on collar, cuffs, and hem".to_string(),
-                ],
-            },
-        ];
-
-        for test_case in test_cases {
-            let result = super::ClickhouseColumn::parse_string_array(test_case.input);
-            assert_eq!(
-                result, test_case.expected,
-                "Failed for input: {}",
-                test_case.input
-            );
         }
     }
 }
