@@ -8,14 +8,18 @@ pub mod errors;
 pub mod interface;
 pub mod pipes;
 
-#[tokio::main]
-async fn main() {
+fn setup_logging() {
     unsafe {
         if env::var("RUST_LOG").is_err() {
             env::set_var("RUST_LOG", "info");
         }
     }
     env_logger::init();
+}
+
+#[tokio::main]
+async fn main() {
+    setup_logging();
 
     let args = command::Command::parse();
 
