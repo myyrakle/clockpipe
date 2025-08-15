@@ -69,7 +69,7 @@ pub struct PostgreColumn {
     pub has_default: bool,
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone, sqlx::FromRow, Default)]
 pub struct ReplicationSlot {
     pub slot_name: String,
     pub wal_status: String,
@@ -84,7 +84,7 @@ pub struct PeekWalChangeResult {
 
 impl PostgresConnection {
     pub async fn get_table_name_by_relation_id(&self, relation_id: i64) -> errors::Result<String> {
-        let result: Vec<(String,)> =
+        let mut result: Vec<(String,)> =
             sqlx::query_as("SELECT relname FROM pg_catalog.pg_class WHERE oid = $1")
                 .bind(relation_id)
                 .fetch_all(&self.pool)
@@ -101,7 +101,7 @@ impl PostgresConnection {
             )));
         }
 
-        Ok(result[0].0.clone())
+        Ok(std::mem::take(&mut result[0].0))
     }
 
     pub async fn get_relation_id_by_table_name(
@@ -163,7 +163,7 @@ impl PostgresConnection {
     }
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone, sqlx::FromRow, Default)]
 pub struct Publication {
     pub name: String,
 }
@@ -333,7 +333,7 @@ impl PostgresConnection {
         &self,
         publication_name: &str,
     ) -> errors::Result<Option<Publication>> {
-        let result: Vec<Publication> =
+        let mut result: Vec<Publication> =
             sqlx::query_as("SELECT pubname as name FROM pg_publication WHERE pubname = $1")
                 .bind(publication_name)
                 .fetch_all(&self.pool)
@@ -347,7 +347,7 @@ impl PostgresConnection {
         if result.is_empty() {
             Ok(None)
         } else {
-            Ok(Some(result[0].clone()))
+            Ok(Some(std::mem::take(&mut result[0])))
         }
     }
 
@@ -432,7 +432,7 @@ impl PostgresConnection {
         &self,
         slot_name: &str,
     ) -> errors::Result<Option<ReplicationSlot>> {
-        let rows: Vec<ReplicationSlot> = sqlx::query_as(
+        let mut rows: Vec<ReplicationSlot> = sqlx::query_as(
             "select slot_name, wal_status from pg_replication_slots where slot_name = $1;",
         )
         .bind(slot_name)
@@ -448,7 +448,9 @@ impl PostgresConnection {
             return Ok(None);
         }
 
-        Ok(Some(rows[0].clone()))
+        let row = std::mem::take(&mut rows[0]);
+
+        Ok(Some(row))
     }
 
     pub async fn list_columns_by_tablename(
@@ -616,7 +618,7 @@ impl PostgresConnection {
             result_data.len()
         );
 
-        let text = String::from_utf8(result_data.clone()).map_err(|e| {
+        let text = String::from_utf8(result_data).map_err(|e| {
             errors::Errors::CopyTableFailed(format!("Failed to convert bytes to string: {e}"))
         })?;
 

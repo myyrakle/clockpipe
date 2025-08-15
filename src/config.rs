@@ -33,16 +33,16 @@ pub struct PostgresConfig {
 }
 
 impl PostgresConfig {
-    pub fn get_publication_name(&self) -> String {
+    pub fn get_publication_name(&self) -> &str {
         self.publication_name
-            .clone()
-            .unwrap_or_else(|| "clockpipe_publication".to_string())
+            .as_deref()
+            .unwrap_or("clockpipe_publication")
     }
 
-    pub fn get_replication_slot_name(&self) -> String {
+    pub fn get_replication_slot_name(&self) -> &str {
         self.replication_slot_name
-            .clone()
-            .unwrap_or_else(|| "clockpipe_replication_slot".to_string())
+            .as_deref()
+            .unwrap_or("clockpipe_replication_slot")
     }
 }
 
