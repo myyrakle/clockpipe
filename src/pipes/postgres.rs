@@ -383,7 +383,10 @@ impl PostgresPipe {
 
             if peek_result.is_empty() {
                 log::info!("No new changes found, waiting for next iteration...");
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                tokio::time::sleep(std::time::Duration::from_millis(
+                    self.postgres_config.get_sleep_millis_when_peek_is_empty(),
+                ))
+                .await;
                 continue;
             }
 

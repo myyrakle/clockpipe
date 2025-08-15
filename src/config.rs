@@ -28,9 +28,10 @@ pub enum SourceType {
 pub struct PostgresConfig {
     pub connection: PostgresConnectionConfig,
     pub tables: Vec<PostgresSource>,
-    pub publication_name: Option<String>,
-    pub replication_slot_name: Option<String>,
-    pub sleep_millis_when_peek_failed: Option<u64>,
+    publication_name: Option<String>,
+    replication_slot_name: Option<String>,
+    sleep_millis_when_peek_failed: Option<u64>,
+    sleep_millis_when_peek_is_empty: Option<u64>,
 }
 
 pub mod default {
@@ -39,6 +40,7 @@ pub mod default {
         pub const REPLICATION_SLOT_NAME: &str = "clockpipe_replication_slot";
         pub const PEEK_CHANGES_LIMIT: i64 = 65536;
         pub const SLEEP_MILLIS_WHEN_PEEK_FAILED: u64 = 5000;
+        pub const SLEEP_MILLIS_WHEN_PEEK_IS_EMPTY: u64 = 5000;
     }
 }
 
@@ -58,6 +60,11 @@ impl PostgresConfig {
     pub fn get_sleep_millis_when_peek_failed(&self) -> u64 {
         self.sleep_millis_when_peek_failed
             .unwrap_or(default::postgres::SLEEP_MILLIS_WHEN_PEEK_FAILED)
+    }
+
+    pub fn get_sleep_millis_when_peek_is_empty(&self) -> u64 {
+        self.sleep_millis_when_peek_is_empty
+            .unwrap_or(default::postgres::SLEEP_MILLIS_WHEN_PEEK_IS_EMPTY)
     }
 }
 
