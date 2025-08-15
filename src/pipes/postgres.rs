@@ -457,8 +457,8 @@ impl PostgresPipe {
             }
 
             // Advance the exporter
-            if !peek_result.is_empty() {
-                let advance_key = &peek_result.last().unwrap().lsn;
+            if let Some(last) = peek_result.last() {
+                let advance_key = &last.lsn;
 
                 if let Err(e) = self
                     .postgres_connection
