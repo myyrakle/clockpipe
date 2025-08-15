@@ -32,17 +32,25 @@ pub struct PostgresConfig {
     pub replication_slot_name: Option<String>,
 }
 
+pub mod default {
+    pub mod postgres {
+        pub const PUBLICATION_NAME: &str = "clockpipe_publication";
+        pub const REPLICATION_SLOT_NAME: &str = "clockpipe_replication_slot";
+        pub const PEEK_CHANGES_LIMIT: i64 = 65536;
+    }
+}
+
 impl PostgresConfig {
     pub fn get_publication_name(&self) -> &str {
         self.publication_name
             .as_deref()
-            .unwrap_or("clockpipe_publication")
+            .unwrap_or(default::postgres::PUBLICATION_NAME)
     }
 
     pub fn get_replication_slot_name(&self) -> &str {
         self.replication_slot_name
             .as_deref()
-            .unwrap_or("clockpipe_replication_slot")
+            .unwrap_or(default::postgres::REPLICATION_SLOT_NAME)
     }
 }
 

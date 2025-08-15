@@ -9,15 +9,15 @@ use crate::{
             pgoutput::{MessageType, parse_pg_output},
         },
     },
-    config::Configuraion,
+    config::{Configuraion, default::postgres::PEEK_CHANGES_LIMIT},
     errors::Errors,
     pipes::IPipe,
 };
 
 #[derive(Debug, Clone, Default)]
 pub struct PostgresPipeContext {
-    pub tables_map: std::collections::HashMap<String, PostgresPipeTableInfo>,
-    pub table_relation_map: std::collections::HashMap<u32, (String, String)>,
+    tables_map: std::collections::HashMap<String, PostgresPipeTableInfo>,
+    table_relation_map: std::collections::HashMap<u32, (String, String)>,
 }
 
 impl PostgresPipeContext {
@@ -40,17 +40,18 @@ impl PostgresPipeContext {
 
 #[derive(Debug, Clone)]
 pub struct PostgresPipeTableInfo {
-    pub postgres_columns: Vec<PostgresColumn>,
-    pub clickhouse_columns: Vec<ClickhouseColumn>,
+    postgres_columns: Vec<PostgresColumn>,
+    clickhouse_columns: Vec<ClickhouseColumn>,
 }
 
 #[derive(Clone)]
 pub struct PostgresPipe {
-    pub context: PostgresPipeContext,
+    context: PostgresPipeContext,
 
-    pub postgres_config: crate::config::PostgresConfig,
-    pub clickhouse_config: crate::config::ClickHouseConfig,
+    postgres_config: crate::config::PostgresConfig,
     postgres_connection: adapter::postgres::PostgresConnection,
+
+    clickhouse_config: crate::config::ClickHouseConfig,
     clickhouse_connection: adapter::clickhouse::ClickhouseConnection,
 }
 
@@ -362,7 +363,7 @@ impl PostgresPipe {
             // 1. Peek new rows
             let peek_result = self
                 .postgres_connection
-                .peek_wal_changes(publication_name, replication_slot_name, 65536)
+                .peek_wal_changes(publication_name, replication_slot_name, PEEK_CHANGES_LIMIT)
                 .await;
 
             let peek_result = match peek_result {
