@@ -66,12 +66,12 @@ pub trait IntoClickhouse {
 
         query.push_str(&column_definitions.join(", \n"));
 
-        let primary_keys: Vec<String> = columns
+        let primary_keys = columns
             .iter()
             .filter(|col| col.is_in_primary_key())
-            .map(|col| col.get_column_name().to_owned())
-            .collect();
-        let primary_keys = primary_keys.join(", ");
+            .map(|col| col.get_column_name())
+            .collect::<Vec<_>>()
+            .join(", ");
 
         query.push(')');
         query.push_str(" ENGINE = ReplacingMergeTree()");
