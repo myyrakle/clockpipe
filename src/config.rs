@@ -32,6 +32,7 @@ pub struct PostgresConfig {
     replication_slot_name: Option<String>,
     sleep_millis_when_peek_failed: Option<u64>,
     sleep_millis_when_peek_is_empty: Option<u64>,
+    sleep_millis_when_write_failed: Option<u64>,
 }
 
 pub mod default {
@@ -41,6 +42,7 @@ pub mod default {
         pub const PEEK_CHANGES_LIMIT: i64 = 65536;
         pub const SLEEP_MILLIS_WHEN_PEEK_FAILED: u64 = 5000;
         pub const SLEEP_MILLIS_WHEN_PEEK_IS_EMPTY: u64 = 5000;
+        pub const SLEEP_MILLIS_WHEN_WRITE_FAILED: u64 = 5000;
     }
 }
 
@@ -65,6 +67,11 @@ impl PostgresConfig {
     pub fn get_sleep_millis_when_peek_is_empty(&self) -> u64 {
         self.sleep_millis_when_peek_is_empty
             .unwrap_or(default::postgres::SLEEP_MILLIS_WHEN_PEEK_IS_EMPTY)
+    }
+
+    pub fn get_sleep_millis_when_write_failed(&self) -> u64 {
+        self.sleep_millis_when_write_failed
+            .unwrap_or(default::postgres::SLEEP_MILLIS_WHEN_WRITE_FAILED)
     }
 }
 

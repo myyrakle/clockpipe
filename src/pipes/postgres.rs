@@ -440,7 +440,11 @@ impl PostgresPipe {
                             log::error!(
                                 "Failed to execute insert query for {schema_name}.{table_name}: {error}"
                             );
-                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                            tokio::time::sleep(std::time::Duration::from_millis(
+                                self.postgres_config.get_sleep_millis_when_write_failed(),
+                            ))
+                            .await;
+
                             continue;
                         }
 
@@ -483,7 +487,11 @@ impl PostgresPipe {
                             log::error!(
                                 "Failed to execute delete query for {schema_name}.{table_name}: {error}"
                             );
-                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                            tokio::time::sleep(std::time::Duration::from_millis(
+                                self.postgres_config.get_sleep_millis_when_write_failed(),
+                            ))
+                            .await;
+
                             continue;
                         }
 
