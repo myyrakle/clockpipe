@@ -38,6 +38,8 @@ pub struct PostgresConfig {
     pub sleep_millis_when_peek_is_empty: u64,
     #[serde(default = "default::postgres::sleep_millis_when_write_failed")]
     pub sleep_millis_when_write_failed: u64,
+    #[serde(default = "default::postgres::peek_changes_limit")]
+    pub peek_changes_limit: i64,
 }
 
 pub mod default {
