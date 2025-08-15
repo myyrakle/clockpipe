@@ -16,8 +16,8 @@ use crate::{
 
 #[derive(Debug, Clone, Default)]
 pub struct PostgresPipeContext {
-    pub tables_map: std::collections::HashMap<String, PostgresPipeTableInfo>,
-    pub table_relation_map: std::collections::HashMap<u32, (String, String)>,
+    tables_map: std::collections::HashMap<String, PostgresPipeTableInfo>,
+    table_relation_map: std::collections::HashMap<u32, (String, String)>,
 }
 
 impl PostgresPipeContext {
@@ -40,17 +40,18 @@ impl PostgresPipeContext {
 
 #[derive(Debug, Clone)]
 pub struct PostgresPipeTableInfo {
-    pub postgres_columns: Vec<PostgresColumn>,
-    pub clickhouse_columns: Vec<ClickhouseColumn>,
+    postgres_columns: Vec<PostgresColumn>,
+    clickhouse_columns: Vec<ClickhouseColumn>,
 }
 
 #[derive(Clone)]
 pub struct PostgresPipe {
-    pub context: PostgresPipeContext,
+    context: PostgresPipeContext,
 
-    pub postgres_config: crate::config::PostgresConfig,
-    pub clickhouse_config: crate::config::ClickHouseConfig,
+    postgres_config: crate::config::PostgresConfig,
     postgres_connection: adapter::postgres::PostgresConnection,
+
+    clickhouse_config: crate::config::ClickHouseConfig,
     clickhouse_connection: adapter::clickhouse::ClickhouseConnection,
 }
 
