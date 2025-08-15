@@ -30,6 +30,7 @@ pub struct PostgresConfig {
     pub tables: Vec<PostgresSource>,
     pub publication_name: Option<String>,
     pub replication_slot_name: Option<String>,
+    pub sleep_millis_when_peek_failed: Option<u64>,
 }
 
 pub mod default {
@@ -37,6 +38,7 @@ pub mod default {
         pub const PUBLICATION_NAME: &str = "clockpipe_publication";
         pub const REPLICATION_SLOT_NAME: &str = "clockpipe_replication_slot";
         pub const PEEK_CHANGES_LIMIT: i64 = 65536;
+        pub const SLEEP_MILLIS_WHEN_PEEK_FAILED: u64 = 5000;
     }
 }
 
@@ -51,6 +53,11 @@ impl PostgresConfig {
         self.replication_slot_name
             .as_deref()
             .unwrap_or(default::postgres::REPLICATION_SLOT_NAME)
+    }
+
+    pub fn get_sleep_millis_when_peek_failed(&self) -> u64 {
+        self.sleep_millis_when_peek_failed
+            .unwrap_or(default::postgres::SLEEP_MILLIS_WHEN_PEEK_FAILED)
     }
 }
 

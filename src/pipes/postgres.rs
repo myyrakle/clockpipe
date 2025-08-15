@@ -371,7 +371,10 @@ impl PostgresPipe {
                 Err(e) => {
                     // 1.1. Handle peek error. wait and retry
                     log::error!("Error peeking WAL changes: {e:?}");
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        self.postgres_config.get_sleep_millis_when_peek_failed(),
+                    ))
+                    .await;
                     continue;
                 }
             };
