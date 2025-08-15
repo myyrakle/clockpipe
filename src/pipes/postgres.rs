@@ -124,7 +124,7 @@ impl PostgresPipe {
         // 1. Publication Create Step
         let publication = self
             .postgres_connection
-            .find_publication_by_name(&publication_name)
+            .find_publication_by_name(publication_name)
             .await?;
 
         if publication.is_none() {
@@ -146,7 +146,7 @@ impl PostgresPipe {
             log::debug!("Source Tables: {source_tables:?}");
 
             self.postgres_connection
-                .create_publication(&self.postgres_config.get_publication_name(), &source_tables)
+                .create_publication(self.postgres_config.get_publication_name(), &source_tables)
                 .await?;
 
             log::info!("Publication {publication_name} created successfully");
@@ -159,7 +159,7 @@ impl PostgresPipe {
 
         let publication_tables = self
             .postgres_connection
-            .get_publication_tables(&publication_name)
+            .get_publication_tables(publication_name)
             .await?;
 
         for table in &self.postgres_config.tables {
@@ -171,7 +171,7 @@ impl PostgresPipe {
             {
                 log::info!("Adding table {table_name} to publication");
                 self.postgres_connection
-                    .add_table_to_publication(&publication_name, &[&table_name])
+                    .add_table_to_publication(publication_name, &[&table_name])
                     .await?;
                 log::info!("Table {table_name} added to publication");
 
@@ -186,7 +186,7 @@ impl PostgresPipe {
 
         let replication_slot = self
             .postgres_connection
-            .find_replication_slot_by_name(&replication_slot_name)
+            .find_replication_slot_by_name(replication_slot_name)
             .await?;
 
         if replication_slot.is_none() {
@@ -195,7 +195,7 @@ impl PostgresPipe {
             );
 
             self.postgres_connection
-                .create_replication_slot(&replication_slot_name)
+                .create_replication_slot(replication_slot_name)
                 .await?;
 
             log::info!("Replication slot {replication_slot_name} created successfully");
@@ -362,7 +362,7 @@ impl PostgresPipe {
             // 1. Peek new rows
             let peek_result = self
                 .postgres_connection
-                .peek_wal_changes(&publication_name, &replication_slot_name, 65536)
+                .peek_wal_changes(publication_name, replication_slot_name, 65536)
                 .await;
 
             let peek_result = match peek_result {
@@ -500,7 +500,7 @@ impl PostgresPipe {
 
                 if let Err(e) = self
                     .postgres_connection
-                    .advance_replication_slot(&replication_slot_name, advance_key)
+                    .advance_replication_slot(replication_slot_name, advance_key)
                     .await
                 {
                     log::error!("Error advancing exporter: {e:?}");
