@@ -28,29 +28,51 @@ pub enum SourceType {
 pub struct PostgresConfig {
     pub connection: PostgresConnectionConfig,
     pub tables: Vec<PostgresSource>,
-    pub publication_name: Option<String>,
-    pub replication_slot_name: Option<String>,
+    #[serde(default = "default::postgres::publication_name")]
+    pub publication_name: String,
+    #[serde(default = "default::postgres::replication_slot_name")]
+    pub replication_slot_name: String,
+    #[serde(default = "default::postgres::sleep_millis_when_peek_failed")]
+    pub sleep_millis_when_peek_failed: u64,
+    #[serde(default = "default::postgres::sleep_millis_when_peek_is_empty")]
+    pub sleep_millis_when_peek_is_empty: u64,
+    #[serde(default = "default::postgres::sleep_millis_when_write_failed")]
+    pub sleep_millis_when_write_failed: u64,
+    #[serde(default = "default::postgres::peek_changes_limit")]
+    pub peek_changes_limit: i64,
 }
 
 pub mod default {
     pub mod postgres {
         pub const PUBLICATION_NAME: &str = "clockpipe_publication";
+        pub fn publication_name() -> String {
+            PUBLICATION_NAME.to_string()
+        }
+
         pub const REPLICATION_SLOT_NAME: &str = "clockpipe_replication_slot";
+        pub fn replication_slot_name() -> String {
+            REPLICATION_SLOT_NAME.to_string()
+        }
+
         pub const PEEK_CHANGES_LIMIT: i64 = 65536;
-    }
-}
+        pub fn peek_changes_limit() -> i64 {
+            PEEK_CHANGES_LIMIT
+        }
 
-impl PostgresConfig {
-    pub fn get_publication_name(&self) -> &str {
-        self.publication_name
-            .as_deref()
-            .unwrap_or(default::postgres::PUBLICATION_NAME)
-    }
+        pub const SLEEP_MILLIS_WHEN_PEEK_FAILED: u64 = 5000;
+        pub fn sleep_millis_when_peek_failed() -> u64 {
+            SLEEP_MILLIS_WHEN_PEEK_FAILED
+        }
 
-    pub fn get_replication_slot_name(&self) -> &str {
-        self.replication_slot_name
-            .as_deref()
-            .unwrap_or(default::postgres::REPLICATION_SLOT_NAME)
+        pub const SLEEP_MILLIS_WHEN_PEEK_IS_EMPTY: u64 = 5000;
+        pub fn sleep_millis_when_peek_is_empty() -> u64 {
+            SLEEP_MILLIS_WHEN_PEEK_IS_EMPTY
+        }
+
+        pub const SLEEP_MILLIS_WHEN_WRITE_FAILED: u64 = 5000;
+        pub fn sleep_millis_when_write_failed() -> u64 {
+            SLEEP_MILLIS_WHEN_WRITE_FAILED
+        }
     }
 }
 
