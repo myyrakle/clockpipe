@@ -105,27 +105,31 @@ impl IPipe for PostgresPipe {
 
 impl PostgresPipe {
     async fn initialize(&mut self) {
-        log::info!("Initializing Postgres exporter...");
+        log::info!("Initializing Postgres Pipe...");
 
-        log::info!("Setup publication and replication slot");
         self.setup_publication()
             .await
-            .expect("Failed to setup exporter");
+            .expect("Failed to setup Postgres Pipe");
 
-        log::info!("Setup ClickHouse table");
         self.setup_table()
             .await
             .expect("Failed to setup ClickHouse table");
     }
 
     async fn setup_publication(&self) -> Result<(), Errors> {
+        log::info!("Setup publication and replication slot...");
+
+        let publication_name = self.postgres_config.get_publication_name();
+
         // 1. Publication Create Step
         let publication = self
             .postgres_connection
-            .find_publication_by_name(&self.postgres_config.get_publication_name())
+            .find_publication_by_name(&publication_name)
             .await?;
 
         if publication.is_none() {
+            log::info!("Publication {publication_name} does not exist, creating a new one");
+
             let source_tables: Vec<String> = self
                 .postgres_config
                 .tables
@@ -139,23 +143,23 @@ impl PostgresPipe {
                 ));
             }
 
-            log::info!("Source Tables: {source_tables:?}");
+            log::debug!("Source Tables: {source_tables:?}");
 
-            log::info!("Create Publication");
             self.postgres_connection
                 .create_publication(&self.postgres_config.get_publication_name(), &source_tables)
                 .await?;
+
+            log::info!("Publication {publication_name} created successfully");
         } else {
-            log::info!(
-                "Publication {} already exists, skipping creation.",
-                self.postgres_config.get_publication_name()
-            );
+            log::info!("Publication {publication_name} already exists, skipping creation.");
         }
 
         // 2. Publication Tables Add Step
+        log::info!("Checking and adding tables to publication...");
+
         let publication_tables = self
             .postgres_connection
-            .get_publication_tables(&self.postgres_config.get_publication_name())
+            .get_publication_tables(&publication_name)
             .await?;
 
         for table in &self.postgres_config.tables {
@@ -167,32 +171,41 @@ impl PostgresPipe {
             {
                 log::info!("Adding table {table_name} to publication");
                 self.postgres_connection
-                    .add_table_to_publication(
-                        &self.postgres_config.get_publication_name(),
-                        &[table_name],
-                    )
+                    .add_table_to_publication(&publication_name, &[&table_name])
                     .await?;
+                log::info!("Table {table_name} added to publication");
+
+                continue;
             }
         }
 
         // 3. Replication Slot Create Step
-        log::info!("Create Replication Slot");
+        log::info!("Setup Replication Slot...");
+
+        let replication_slot_name = self.postgres_config.get_replication_slot_name();
+
         let replication_slot = self
             .postgres_connection
-            .find_replication_slot_by_name(&self.postgres_config.get_replication_slot_name())
+            .find_replication_slot_by_name(&replication_slot_name)
             .await?;
 
         if replication_slot.is_none() {
+            log::info!(
+                "Replication slot {replication_slot_name} does not exist, creating a new one"
+            );
+
             self.postgres_connection
-                .create_replication_slot(&self.postgres_config.get_replication_slot_name())
+                .create_replication_slot(&replication_slot_name)
                 .await?;
+
+            log::info!("Replication slot {replication_slot_name} created successfully");
         }
 
         Ok(())
     }
 
     async fn setup_table(&mut self) -> Result<(), Errors> {
-        log::info!("Setting up table in ClickHouse...");
+        log::info!("Setting up tables in ClickHouse...");
 
         for table in &self.postgres_config.tables {
             let clickhouse_table_not_exists = self
@@ -210,7 +223,11 @@ impl PostgresPipe {
                 .await?;
 
             if clickhouse_table_not_exists {
-                log::info!("Creating ClickHouse table for {}", table.table_name);
+                log::info!(
+                    "Table {}.{} does not exist in ClickHouse, creating it",
+                    table.schema_name,
+                    table.table_name
+                );
                 let create_table_query = self.generate_create_table_query(
                     &self.clickhouse_config.connection.database,
                     &table.table_name,
@@ -220,6 +237,12 @@ impl PostgresPipe {
                 self.clickhouse_connection
                     .execute_query(&create_table_query)
                     .await?;
+
+                log::info!(
+                    "Table {}.{} created in ClickHouse",
+                    table.schema_name,
+                    table.table_name
+                );
             }
 
             let relation_id = self
@@ -256,11 +279,12 @@ impl PostgresPipe {
         log::info!("Starting initial sync...");
 
         for table in &self.postgres_config.tables {
+            let schema_name = &table.schema_name;
+            let table_name = &table.table_name;
+
             if table.skip_copy {
-                log::info!(
-                    "Skipping initial sync for {}.{} as skip_copy is set to true",
-                    table.schema_name,
-                    table.table_name
+                log::debug!(
+                    "Skipping initial sync for {schema_name}.{table_name} as skip_copy is set to true"
                 );
                 continue;
             }
@@ -274,28 +298,38 @@ impl PostgresPipe {
                 .await
                 .expect("Failed to check if table exists")
             {
-                log::info!(
-                    "Table {} already exists in ClickHouse, skipping initial sync.",
-                    table.table_name
+                log::debug!(
+                    "Table {schema_name}.{table_name} already exists in ClickHouse, skipping initial sync.",
                 );
                 continue;
             }
 
+            log::info!("Copying data from Postgres table {schema_name}.{table_name}...",);
             let rows = self
                 .postgres_connection
                 .copy_table_to_stdout(&table.schema_name, &table.table_name)
                 .await
                 .expect("Failed to copy table data from Postgres");
 
-            let schema_name = &table.schema_name;
-            let table_name = &table.table_name;
+            log::info!("Inserting copied data into ClickHouse table {schema_name}.{table_name}...",);
+
             let source_table_info = self
                 .context
                 .tables_map
                 .get(&format!("{schema_name}.{table_name}"))
                 .expect("Table info not found in context");
 
-            for chunk in rows.chunks(100000) {
+            let chunks = rows.chunks(100000);
+            let chunk_count = chunks.len();
+
+            for (chunk_index, chunk) in chunks.enumerate() {
+                let chunk_index = chunk_index + 1;
+                let percent = (chunk_index * 100) / chunk_count;
+
+                log::debug!(
+                    "Processing chunk {percent}% ({chunk_index}/{chunk_count}) for table {schema_name}.{table_name}",
+                );
+
                 let insert_query = self.generate_insert_query(
                     &self.clickhouse_config,
                     &source_table_info.clickhouse_columns,
@@ -311,12 +345,16 @@ impl PostgresPipe {
                         .expect("Failed to execute insert query in ClickHouse");
                 }
             }
+
+            log::info!("Copy completed for table {schema_name}.{table_name}");
         }
     }
 }
 
 impl PostgresPipe {
     async fn sync_loop(&self) {
+        log::info!("Starting sync loop...");
+
         let publication_name = self.postgres_config.get_publication_name();
         let replication_slot_name = self.postgres_config.get_replication_slot_name();
 
@@ -508,7 +546,7 @@ pub async fn run_postgres_pipe(config: &Configuraion) {
 
     tokio::select! {
         _ = pipe.run_pipe() => {
-            log::info!("Postgres pipe running.");
+            log::info!("Postgres pipe running...");
         }
     }
 }
