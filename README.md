@@ -25,6 +25,12 @@ Using Cargo
 cargo install clockpipe
 ```
 
+Using Docker
+
+```bash
+sudo docker run -v $(pwd)/clockpipe-config.json:/app/config.json --network host myyrakle/clockpipe:v0.3.0
+```
+
 ## PostgreSQL Setup
 
 - Synchronization is implemented through PostgreSQL Publication.
