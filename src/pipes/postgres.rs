@@ -12,7 +12,7 @@ use crate::{
     },
     config::Configuraion,
     errors::Errors,
-    interface::IPipe,
+    pipes::IPipe,
 };
 
 #[derive(Debug, Clone, Default)]
