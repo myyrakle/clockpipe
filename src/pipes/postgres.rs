@@ -9,7 +9,7 @@ use crate::{
             pgoutput::{MessageType, parse_pg_output},
         },
     },
-    config::Configuraion,
+    config::{Configuraion, default::postgres::PEEK_CHANGES_LIMIT},
     errors::Errors,
     pipes::IPipe,
 };
@@ -363,7 +363,7 @@ impl PostgresPipe {
             // 1. Peek new rows
             let peek_result = self
                 .postgres_connection
-                .peek_wal_changes(publication_name, replication_slot_name, 65536)
+                .peek_wal_changes(publication_name, replication_slot_name, PEEK_CHANGES_LIMIT)
                 .await;
 
             let peek_result = match peek_result {
