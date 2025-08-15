@@ -33,6 +33,8 @@ async fn main() {
 
             match config.source.source_type {
                 config::SourceType::Postgres => {
+                    log::info!("Start Postgres pipe");
+
                     pipes::run_postgres_pipe(&config).await;
                 }
             }

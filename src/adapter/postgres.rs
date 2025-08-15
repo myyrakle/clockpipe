@@ -395,7 +395,7 @@ impl PostgresConnection {
     pub async fn add_table_to_publication(
         &self,
         publication_name: &str,
-        table_names: &[String],
+        table_names: &[&str],
     ) -> errors::Result<()> {
         let query = format!(
             "ALTER PUBLICATION {} ADD TABLE {}",
