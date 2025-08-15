@@ -120,7 +120,7 @@ impl PostgresPipe {
     async fn setup_publication(&self) -> Result<(), Errors> {
         log::info!("Setup publication and replication slot...");
 
-        let publication_name = self.postgres_config.get_publication_name();
+        let publication_name = &self.postgres_config.publication_name;
 
         // 1. Publication Create Step
         let publication = self
@@ -147,7 +147,7 @@ impl PostgresPipe {
             log::debug!("Source Tables: {source_tables:?}");
 
             self.postgres_connection
-                .create_publication(self.postgres_config.get_publication_name(), &source_tables)
+                .create_publication(publication_name, &source_tables)
                 .await?;
 
             log::info!("Publication {publication_name} created successfully");
@@ -183,7 +183,7 @@ impl PostgresPipe {
         // 3. Replication Slot Create Step
         log::info!("Setup Replication Slot...");
 
-        let replication_slot_name = self.postgres_config.get_replication_slot_name();
+        let replication_slot_name = &self.postgres_config.replication_slot_name;
 
         let replication_slot = self
             .postgres_connection
@@ -356,8 +356,8 @@ impl PostgresPipe {
     async fn sync_loop(&self) {
         log::info!("Starting sync loop...");
 
-        let publication_name = self.postgres_config.get_publication_name();
-        let replication_slot_name = self.postgres_config.get_replication_slot_name();
+        let publication_name = &self.postgres_config.publication_name;
+        let replication_slot_name = &self.postgres_config.replication_slot_name;
 
         loop {
             // 1. Peek new rows
@@ -372,7 +372,7 @@ impl PostgresPipe {
                     // 1.1. Handle peek error. wait and retry
                     log::error!("Error peeking WAL changes: {e:?}");
                     tokio::time::sleep(std::time::Duration::from_millis(
-                        self.postgres_config.get_sleep_millis_when_peek_failed(),
+                        self.postgres_config.sleep_millis_when_peek_failed,
                     ))
                     .await;
                     continue;
@@ -384,7 +384,7 @@ impl PostgresPipe {
             if peek_result.is_empty() {
                 log::info!("No new changes found, waiting for next iteration...");
                 tokio::time::sleep(std::time::Duration::from_millis(
-                    self.postgres_config.get_sleep_millis_when_peek_is_empty(),
+                    self.postgres_config.sleep_millis_when_peek_is_empty,
                 ))
                 .await;
                 continue;
@@ -441,7 +441,7 @@ impl PostgresPipe {
                                 "Failed to execute insert query for {schema_name}.{table_name}: {error}"
                             );
                             tokio::time::sleep(std::time::Duration::from_millis(
-                                self.postgres_config.get_sleep_millis_when_write_failed(),
+                                self.postgres_config.sleep_millis_when_write_failed,
                             ))
                             .await;
 
@@ -488,7 +488,7 @@ impl PostgresPipe {
                                 "Failed to execute delete query for {schema_name}.{table_name}: {error}"
                             );
                             tokio::time::sleep(std::time::Duration::from_millis(
-                                self.postgres_config.get_sleep_millis_when_write_failed(),
+                                self.postgres_config.sleep_millis_when_write_failed,
                             ))
                             .await;
 
