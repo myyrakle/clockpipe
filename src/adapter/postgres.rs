@@ -3,8 +3,7 @@ pub mod pgoutput;
 
 use crate::{
     adapter::{
-        clickhouse::ClickhouseType,
-        convert::{IntoClickhouseColumn, IntoClickhouseRow, IntoClickhouseValue},
+        IntoClickhouseColumn, IntoClickhouseRow, IntoClickhouseValue, clickhouse::ClickhouseType,
         postgres::pgoutput::PgOutputValue,
     },
     config::PostgresConnectionConfig,
