@@ -49,11 +49,11 @@ pub enum ClickhouseType {
 
 impl ClickhouseType {
     pub fn nullable(self) -> Self {
-        ClickhouseType::Nullable(Box::new(self.clone()))
+        ClickhouseType::Nullable(Box::new(self))
     }
 
     pub fn array(self) -> Self {
-        ClickhouseType::Array(Box::new(self.clone()))
+        ClickhouseType::Array(Box::new(self))
     }
 
     pub fn to_type_text(&self) -> String {
@@ -158,9 +158,9 @@ impl ClickhouseConnection {
     pub fn new(config: &crate::config::ClickHouseConnectionConfig) -> Self {
         let client = clickhouse::Client::default()
             .with_url(format!("http://{}:{}", config.host, config.port))
-            .with_user(config.username.clone())
-            .with_password(config.password.clone())
-            .with_database(config.database.clone());
+            .with_user(config.username.as_str())
+            .with_password(config.password.as_str())
+            .with_database(config.database.as_str());
 
         log::info!(
             "Created ClickHouse connection to {}:{}",

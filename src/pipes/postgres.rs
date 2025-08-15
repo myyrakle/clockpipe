@@ -261,8 +261,8 @@ impl PostgresPipe {
             self.context.set_table(
                 table.schema_name.as_str(),
                 table.table_name.as_str(),
-                postgres_columns.clone(),
-                clickhouse_columns.clone(),
+                postgres_columns,
+                clickhouse_columns,
             );
             self.context.table_relation_map.insert(
                 relation_id as u32,
@@ -524,17 +524,12 @@ impl PostgresPipe {
 
 impl IntoClickhouse for PostgresPipe {}
 
-pub async fn run_postgres_pipe(config: &Configuraion) {
+pub async fn run_postgres_pipe(config: Configuraion) {
     let mut pipe = PostgresPipe::new(
-        config
-            .source
-            .postgres
-            .clone()
-            .expect("Postgres config is required"),
+        config.source.postgres.expect("Postgres config is required"),
         config
             .target
             .clickhouse
-            .clone()
             .expect("Clickhouse config is required"),
     )
     .await;

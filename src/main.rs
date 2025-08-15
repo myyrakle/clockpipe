@@ -35,7 +35,7 @@ async fn main() {
                 config::SourceType::Postgres => {
                     log::info!("Start Postgres pipe");
 
-                    pipes::run_postgres_pipe(&config).await;
+                    pipes::run_postgres_pipe(config).await;
                 }
             }
         }

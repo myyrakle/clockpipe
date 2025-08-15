@@ -115,8 +115,8 @@ pub trait IntoClickhouse {
                 continue;
             };
 
-            columns.push((clickhouse_column.clone(), postgres_column));
-            column_names.push(clickhouse_column.column_name.clone());
+            columns.push((clickhouse_column, postgres_column));
+            column_names.push(clickhouse_column.column_name.as_str());
         }
 
         insert_query.push_str(&format!("({}) ", column_names.join(", ")));
