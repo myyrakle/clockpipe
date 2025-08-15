@@ -6,6 +6,7 @@ use crate::{
     config::ClickHouseConfig,
 };
 
+/// Trait for converting source types to Clickhouse column representation
 pub trait IntoClickhouseColumn {
     fn to_clickhouse_type(&self) -> ClickhouseType;
     fn get_column_name(&self) -> &str;
@@ -14,6 +15,7 @@ pub trait IntoClickhouseColumn {
     fn is_in_primary_key(&self) -> bool;
 }
 
+/// Trait for converting source data row to Clickhouse row representation
 pub trait IntoClickhouseRow {
     fn find_value_by_column_name(
         &self,
@@ -22,6 +24,7 @@ pub trait IntoClickhouseRow {
     ) -> Option<impl IntoClickhouseValue + Default>;
 }
 
+/// Trait for converting each source value to Clickhouse value representation
 pub trait IntoClickhouseValue {
     fn to_integer(self) -> String;
     fn to_real(self) -> String;
@@ -37,6 +40,7 @@ pub trait IntoClickhouseValue {
     fn is_null(&self) -> bool;
 }
 
+/// Trait for generating Clickhouse queries
 pub trait IntoClickhouse {
     fn generate_create_table_query(
         &self,
