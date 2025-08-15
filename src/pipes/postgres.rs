@@ -2,9 +2,8 @@ use std::collections::HashMap;
 
 use crate::{
     adapter::{
-        self,
+        self, IntoClickhouse,
         clickhouse::ClickhouseColumn,
-        convert::IntoClickhouse,
         postgres::{
             PostgresColumn, PostgresCopyRow,
             pgoutput::{MessageType, parse_pg_output},
@@ -12,7 +11,7 @@ use crate::{
     },
     config::Configuraion,
     errors::Errors,
-    interface::IPipe,
+    pipes::IPipe,
 };
 
 #[derive(Debug, Clone, Default)]
