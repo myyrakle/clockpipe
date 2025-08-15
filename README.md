@@ -91,3 +91,9 @@ clockpipe run --config-file ./clockpipe-config.json
         }
     ]
 ```
+
+- You can also adjust the log level. You can set values such as error, warn, info, and debug to the "RUST_LOG" environment variable.
+
+```
+RUST_LOG=debug cargo run -- run --config-file ./clockpipe-config.json
+```
