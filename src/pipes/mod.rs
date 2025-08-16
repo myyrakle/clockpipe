@@ -6,5 +6,15 @@ use crate::errors::Errors;
 #[async_trait::async_trait]
 pub trait IPipe {
     async fn ping(&self) -> Result<(), Errors>;
-    async fn run_pipe(&mut self);
+
+    async fn run_pipe(&mut self) {
+        self.initialize().await;
+
+        self.first_sync().await;
+        self.sync_loop().await;
+    }
+
+    async fn initialize(&mut self);
+    async fn first_sync(&self);
+    async fn sync_loop(&self);
 }

@@ -96,15 +96,6 @@ impl IPipe for PostgresPipe {
         Ok(())
     }
 
-    async fn run_pipe(&mut self) {
-        self.initialize().await;
-
-        self.first_sync().await;
-        self.sync_loop().await;
-    }
-}
-
-impl PostgresPipe {
     async fn initialize(&mut self) {
         log::info!("Initializing Postgres Pipe...");
 
@@ -117,165 +108,6 @@ impl PostgresPipe {
             .expect("Failed to setup ClickHouse table");
     }
 
-    async fn setup_publication(&self) -> Result<(), Errors> {
-        log::info!("Setup publication and replication slot...");
-
-        let publication_name = &self.postgres_config.publication_name;
-
-        // 1. Publication Create Step
-        let publication = self
-            .postgres_connection
-            .find_publication_by_name(publication_name)
-            .await?;
-
-        if publication.is_none() {
-            log::info!("Publication {publication_name} does not exist, creating a new one");
-
-            let source_tables: Vec<String> = self
-                .postgres_config
-                .tables
-                .iter()
-                .map(|table| format!("{}.{}", table.schema_name, table.table_name))
-                .collect();
-
-            if source_tables.is_empty() {
-                return Err(Errors::PublicationCreateFailed(
-                    "No source tables specified in Postgres configuration".to_string(),
-                ));
-            }
-
-            log::debug!("Source Tables: {source_tables:?}");
-
-            self.postgres_connection
-                .create_publication(publication_name, &source_tables)
-                .await?;
-
-            log::info!("Publication {publication_name} created successfully");
-        } else {
-            log::info!("Publication {publication_name} already exists, skipping creation.");
-        }
-
-        // 2. Publication Tables Add Step
-        log::info!("Checking and adding tables to publication...");
-
-        let publication_tables = self
-            .postgres_connection
-            .get_publication_tables(publication_name)
-            .await?;
-
-        for table in &self.postgres_config.tables {
-            let table_name = format!("{}.{}", table.schema_name, table.table_name);
-
-            if !publication_tables
-                .iter()
-                .any(|t| t.table_name == table.table_name && t.schema_name == table.schema_name)
-            {
-                log::info!("Adding table {table_name} to publication");
-                self.postgres_connection
-                    .add_table_to_publication(publication_name, &[&table_name])
-                    .await?;
-                log::info!("Table {table_name} added to publication");
-
-                continue;
-            }
-        }
-
-        // 3. Replication Slot Create Step
-        log::info!("Setup Replication Slot...");
-
-        let replication_slot_name = &self.postgres_config.replication_slot_name;
-
-        let replication_slot = self
-            .postgres_connection
-            .find_replication_slot_by_name(replication_slot_name)
-            .await?;
-
-        if replication_slot.is_none() {
-            log::info!(
-                "Replication slot {replication_slot_name} does not exist, creating a new one"
-            );
-
-            self.postgres_connection
-                .create_replication_slot(replication_slot_name)
-                .await?;
-
-            log::info!("Replication slot {replication_slot_name} created successfully");
-        }
-
-        Ok(())
-    }
-
-    async fn setup_table(&mut self) -> Result<(), Errors> {
-        log::info!("Setting up tables in ClickHouse...");
-
-        for table in &self.postgres_config.tables {
-            let clickhouse_table_not_exists = self
-                .clickhouse_connection
-                .list_columns_by_tablename(
-                    &self.clickhouse_config.connection.database,
-                    &table.table_name,
-                )
-                .await?
-                .is_empty();
-
-            let postgres_columns = self
-                .postgres_connection
-                .list_columns_by_tablename(&table.schema_name, &table.table_name)
-                .await?;
-
-            if clickhouse_table_not_exists {
-                log::info!(
-                    "Table {}.{} does not exist in ClickHouse, creating it",
-                    table.schema_name,
-                    table.table_name
-                );
-                let create_table_query = self.generate_create_table_query(
-                    &self.clickhouse_config.connection.database,
-                    &table.table_name,
-                    &postgres_columns,
-                );
-
-                self.clickhouse_connection
-                    .execute_query(&create_table_query)
-                    .await?;
-
-                log::info!(
-                    "Table {}.{} created in ClickHouse",
-                    table.schema_name,
-                    table.table_name
-                );
-            }
-
-            let relation_id = self
-                .postgres_connection
-                .get_relation_id_by_table_name(&table.schema_name, &table.table_name)
-                .await?;
-
-            let clickhouse_columns = self
-                .clickhouse_connection
-                .list_columns_by_tablename(
-                    &self.clickhouse_config.connection.database,
-                    &table.table_name,
-                )
-                .await?;
-
-            self.context.set_table(
-                table.schema_name.as_str(),
-                table.table_name.as_str(),
-                postgres_columns,
-                clickhouse_columns,
-            );
-            self.context.table_relation_map.insert(
-                relation_id as u32,
-                (table.schema_name.clone(), table.table_name.clone()),
-            );
-        }
-
-        Ok(())
-    }
-}
-
-impl PostgresPipe {
     async fn first_sync(&self) {
         log::info!("Starting initial sync...");
 
@@ -350,9 +182,7 @@ impl PostgresPipe {
             log::info!("Copy completed for table {schema_name}.{table_name}");
         }
     }
-}
 
-impl PostgresPipe {
     async fn sync_loop(&self) {
         log::info!("Starting sync loop...");
 
@@ -538,6 +368,165 @@ impl PostgresPipe {
                 );
             }
         }
+    }
+}
+
+impl PostgresPipe {
+    async fn setup_publication(&self) -> Result<(), Errors> {
+        log::info!("Setup publication and replication slot...");
+
+        let publication_name = &self.postgres_config.publication_name;
+
+        // 1. Publication Create Step
+        let publication = self
+            .postgres_connection
+            .find_publication_by_name(publication_name)
+            .await?;
+
+        if publication.is_none() {
+            log::info!("Publication {publication_name} does not exist, creating a new one");
+
+            let source_tables: Vec<String> = self
+                .postgres_config
+                .tables
+                .iter()
+                .map(|table| format!("{}.{}", table.schema_name, table.table_name))
+                .collect();
+
+            if source_tables.is_empty() {
+                return Err(Errors::PublicationCreateFailed(
+                    "No source tables specified in Postgres configuration".to_string(),
+                ));
+            }
+
+            log::debug!("Source Tables: {source_tables:?}");
+
+            self.postgres_connection
+                .create_publication(publication_name, &source_tables)
+                .await?;
+
+            log::info!("Publication {publication_name} created successfully");
+        } else {
+            log::info!("Publication {publication_name} already exists, skipping creation.");
+        }
+
+        // 2. Publication Tables Add Step
+        log::info!("Checking and adding tables to publication...");
+
+        let publication_tables = self
+            .postgres_connection
+            .get_publication_tables(publication_name)
+            .await?;
+
+        for table in &self.postgres_config.tables {
+            let table_name = format!("{}.{}", table.schema_name, table.table_name);
+
+            if !publication_tables
+                .iter()
+                .any(|t| t.table_name == table.table_name && t.schema_name == table.schema_name)
+            {
+                log::info!("Adding table {table_name} to publication");
+                self.postgres_connection
+                    .add_table_to_publication(publication_name, &[&table_name])
+                    .await?;
+                log::info!("Table {table_name} added to publication");
+
+                continue;
+            }
+        }
+
+        // 3. Replication Slot Create Step
+        log::info!("Setup Replication Slot...");
+
+        let replication_slot_name = &self.postgres_config.replication_slot_name;
+
+        let replication_slot = self
+            .postgres_connection
+            .find_replication_slot_by_name(replication_slot_name)
+            .await?;
+
+        if replication_slot.is_none() {
+            log::info!(
+                "Replication slot {replication_slot_name} does not exist, creating a new one"
+            );
+
+            self.postgres_connection
+                .create_replication_slot(replication_slot_name)
+                .await?;
+
+            log::info!("Replication slot {replication_slot_name} created successfully");
+        }
+
+        Ok(())
+    }
+
+    async fn setup_table(&mut self) -> Result<(), Errors> {
+        log::info!("Setting up tables in ClickHouse...");
+
+        for table in &self.postgres_config.tables {
+            let clickhouse_table_not_exists = self
+                .clickhouse_connection
+                .list_columns_by_tablename(
+                    &self.clickhouse_config.connection.database,
+                    &table.table_name,
+                )
+                .await?
+                .is_empty();
+
+            let postgres_columns = self
+                .postgres_connection
+                .list_columns_by_tablename(&table.schema_name, &table.table_name)
+                .await?;
+
+            if clickhouse_table_not_exists {
+                log::info!(
+                    "Table {}.{} does not exist in ClickHouse, creating it",
+                    table.schema_name,
+                    table.table_name
+                );
+                let create_table_query = self.generate_create_table_query(
+                    &self.clickhouse_config.connection.database,
+                    &table.table_name,
+                    &postgres_columns,
+                );
+
+                self.clickhouse_connection
+                    .execute_query(&create_table_query)
+                    .await?;
+
+                log::info!(
+                    "Table {}.{} created in ClickHouse",
+                    table.schema_name,
+                    table.table_name
+                );
+            }
+
+            let relation_id = self
+                .postgres_connection
+                .get_relation_id_by_table_name(&table.schema_name, &table.table_name)
+                .await?;
+
+            let clickhouse_columns = self
+                .clickhouse_connection
+                .list_columns_by_tablename(
+                    &self.clickhouse_config.connection.database,
+                    &table.table_name,
+                )
+                .await?;
+
+            self.context.set_table(
+                table.schema_name.as_str(),
+                table.table_name.as_str(),
+                postgres_columns,
+                clickhouse_columns,
+            );
+            self.context.table_relation_map.insert(
+                relation_id as u32,
+                (table.schema_name.clone(), table.table_name.clone()),
+            );
+        }
+
+        Ok(())
     }
 }
 
