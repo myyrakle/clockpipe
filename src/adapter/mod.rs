@@ -87,6 +87,24 @@ pub trait IntoClickhouse {
         query
     }
 
+    fn generate_add_column_query(
+        &self,
+        clickhouse_config: &ClickHouseConfig,
+        source_column: &impl IntoClickhouseColumn,
+        table_name: &str,
+    ) -> String {
+        let database_name = &clickhouse_config.connection.database;
+        let column_name = source_column.get_column_name();
+        let column_type = source_column.to_clickhouse_type().to_type_text();
+        let column_comment = source_column.get_comment().replace("'", "\"");
+
+        let add_column_query = format!(
+            "ALTER TABLE {database_name}.{table_name} ADD COLUMN `{column_name}` {column_type} COMMENT '{column_comment}';"
+        );
+
+        add_column_query
+    }
+
     fn generate_insert_query(
         &self,
         clickhouse_config: &ClickHouseConfig,

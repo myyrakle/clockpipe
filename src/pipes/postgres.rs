@@ -514,6 +514,21 @@ impl PostgresPipe {
                 )
                 .await?;
 
+            // Check if all Postgres columns exist in ClickHouse
+            for postgres_column in &postgres_columns {
+                if !clickhouse_columns
+                    .iter()
+                    .any(|c| c.column_name == postgres_column.column_name)
+                {
+                    log::info!(
+                        "Column {}.{} does not exist in ClickHouse. Try to add it",
+                        table.schema_name,
+                        postgres_column.column_name,
+                    );
+                    continue;
+                }
+            }
+
             self.context.set_table(
                 table.schema_name.as_str(),
                 table.table_name.as_str(),
