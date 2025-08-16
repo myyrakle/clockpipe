@@ -90,8 +90,8 @@ pub trait IntoClickhouse {
     fn generate_add_column_query(
         &self,
         clickhouse_config: &ClickHouseConfig,
-        source_column: &impl IntoClickhouseColumn,
         table_name: &str,
+        source_column: &impl IntoClickhouseColumn,
     ) -> String {
         let database_name = &clickhouse_config.connection.database;
         let column_name = source_column.get_column_name();

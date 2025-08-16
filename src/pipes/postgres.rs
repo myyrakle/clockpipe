@@ -506,7 +506,7 @@ impl PostgresPipe {
                 .get_relation_id_by_table_name(&table.schema_name, &table.table_name)
                 .await?;
 
-            let clickhouse_columns = self
+            let mut clickhouse_columns = self
                 .clickhouse_connection
                 .list_columns_by_tablename(
                     &self.clickhouse_config.connection.database,
@@ -515,18 +515,51 @@ impl PostgresPipe {
                 .await?;
 
             // Check if all Postgres columns exist in ClickHouse
+            let mut need_refresh_columns = false;
+
             for postgres_column in &postgres_columns {
                 if !clickhouse_columns
                     .iter()
                     .any(|c| c.column_name == postgres_column.column_name)
                 {
                     log::info!(
-                        "Column {}.{} does not exist in ClickHouse. Try to add it",
+                        "[{}.{}] Column {} does not exist in ClickHouse. Try to add it",
                         table.schema_name,
+                        table.table_name,
                         postgres_column.column_name,
                     );
+
+                    let add_column_query = self.generate_add_column_query(
+                        &self.clickhouse_config,
+                        table.table_name.as_str(),
+                        postgres_column,
+                    );
+
+                    self.clickhouse_connection
+                        .execute_query(&add_column_query)
+                        .await?;
+
+                    log::info!(
+                        "[{}.{}] Column {} added to ClickHouse",
+                        table.schema_name,
+                        table.table_name,
+                        postgres_column.column_name,
+                    );
+
+                    need_refresh_columns = true;
+
                     continue;
                 }
+            }
+
+            if need_refresh_columns {
+                clickhouse_columns = self
+                    .clickhouse_connection
+                    .list_columns_by_tablename(
+                        &self.clickhouse_config.connection.database,
+                        &table.table_name,
+                    )
+                    .await?;
             }
 
             self.context.set_table(
