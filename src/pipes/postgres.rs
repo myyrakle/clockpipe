@@ -387,7 +387,10 @@ impl IPipe for PostgresPipe {
                 );
             }
 
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await
+            tokio::time::sleep(std::time::Duration::from_millis(
+                self.config.sleep_millis_after_sync_cycle,
+            ))
+            .await;
         }
     }
 }
