@@ -217,8 +217,6 @@ impl IPipe for PostgresPipe {
                 }
             };
 
-            // parse peeked rows
-
             if peek_result.is_empty() {
                 log::info!("No new changes found, waiting for next iteration...");
                 tokio::time::sleep(std::time::Duration::from_millis(
@@ -233,6 +231,7 @@ impl IPipe for PostgresPipe {
             let mut batch_insert_queue = HashMap::new();
             let mut batch_delete_queue = HashMap::new();
 
+            // 2. Parse peeked rows, group by table and prepare for insert/update/delete
             for row in peek_result.iter() {
                 let Some(parsed_row) =
                     parse_pg_output(&row.data).expect("Failed to parse PgOutput")
@@ -305,7 +304,7 @@ impl IPipe for PostgresPipe {
                 }
             }
 
-            // Insert/Update rows in ClickHouse
+            // 3. Insert/Update rows in ClickHouse
             for (table_name, batch) in batch_insert_queue.iter() {
                 let insert_query = self.generate_insert_query(
                     &self.clickhouse_config,
@@ -334,7 +333,7 @@ impl IPipe for PostgresPipe {
                 }
             }
 
-            // Delete rows in ClickHouse
+            // 4. Delete rows in ClickHouse
             for (table_name, batch) in batch_delete_queue.iter() {
                 let delete_query = self.generate_delete_query(
                     &self.clickhouse_config,
@@ -363,7 +362,7 @@ impl IPipe for PostgresPipe {
                 }
             }
 
-            // Advance the exporter
+            // 5. Move cursor for next peek
             if let Some(last) = peek_result.last() {
                 let advance_key = &last.lsn;
 
@@ -377,7 +376,7 @@ impl IPipe for PostgresPipe {
                 }
             }
 
-            // Log the changes
+            // 6. Log the changes
             for (table_name, count) in table_log_map.iter() {
                 log::info!(
                     "Table [{}]: Inserted: {}, Updated: {}, Deleted: {}",
