@@ -324,7 +324,7 @@ impl IPipe for PostgresPipe {
                 let source_table_info = self
                     .context
                     .tables_map
-                    .get(table_name.as_str())
+                    .get(&format!("{}.{}", table_name, table_name))
                     .expect("Table info not found in context");
 
                 let insert_query = self.generate_insert_query(
