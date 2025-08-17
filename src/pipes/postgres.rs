@@ -390,6 +390,8 @@ impl IPipe for PostgresPipe {
                     count.delete_count
                 );
             }
+
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await
         }
     }
 }
