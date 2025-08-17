@@ -73,6 +73,11 @@ pub mod default {
         pub fn sleep_millis_when_write_failed() -> u64 {
             SLEEP_MILLIS_WHEN_WRITE_FAILED
         }
+
+        pub const MIN_AGE_TO_FORCE_MERGE_SECONDS: u64 = 60;
+        pub fn min_age_to_force_merge_seconds() -> u64 {
+            MIN_AGE_TO_FORCE_MERGE_SECONDS
+        }
     }
 }
 

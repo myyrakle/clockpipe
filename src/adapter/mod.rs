@@ -3,7 +3,7 @@ pub mod postgres;
 
 use crate::{
     adapter::clickhouse::{ClickhouseColumn, ClickhouseType},
-    config::ClickHouseConfig,
+    config::{ClickHouseConfig, default::postgres::MIN_AGE_TO_FORCE_MERGE_SECONDS},
 };
 
 /// Trait for converting source types to Clickhouse column representation
@@ -80,7 +80,9 @@ pub trait IntoClickhouse {
         }
         query.push_str("SETTINGS");
         query.push_str(" index_granularity = 8192,");
-        query.push_str(" min_age_to_force_merge_seconds = 1");
+        query.push_str(
+            format!(" min_age_to_force_merge_seconds = {MIN_AGE_TO_FORCE_MERGE_SECONDS}",).as_str(),
+        );
 
         query.push(';');
 
