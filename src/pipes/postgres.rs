@@ -363,6 +363,8 @@ impl IPipe for PostgresPipe {
 
                         continue;
                     }
+
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                 }
             }
 
