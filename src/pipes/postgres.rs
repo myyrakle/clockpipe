@@ -48,6 +48,8 @@ pub struct PostgresPipeTableInfo {
 pub struct PostgresPipe {
     context: PostgresPipeContext,
 
+    config: Configuraion,
+
     postgres_config: crate::config::PostgresConfig,
     postgres_connection: adapter::postgres::PostgresConnection,
 
@@ -57,6 +59,7 @@ pub struct PostgresPipe {
 
 impl PostgresPipe {
     pub async fn new(
+        config: Configuraion,
         postgres_config: crate::config::PostgresConfig,
         clickhouse_config: crate::config::ClickHouseConfig,
     ) -> Self {
@@ -70,6 +73,7 @@ impl PostgresPipe {
 
         PostgresPipe {
             context: PostgresPipeContext::default(),
+            config,
             postgres_config,
             clickhouse_config,
             postgres_connection,
@@ -196,7 +200,7 @@ impl IPipe for PostgresPipe {
                 .peek_wal_changes(
                     publication_name,
                     replication_slot_name,
-                    self.postgres_config.peek_changes_limit,
+                    self.config.peek_changes_limit,
                 )
                 .await;
 
@@ -206,7 +210,7 @@ impl IPipe for PostgresPipe {
                     // 1.1. Handle peek error. wait and retry
                     log::error!("Error peeking WAL changes: {e:?}");
                     tokio::time::sleep(std::time::Duration::from_millis(
-                        self.postgres_config.sleep_millis_when_peek_failed,
+                        self.config.sleep_millis_when_peek_failed,
                     ))
                     .await;
                     continue;
@@ -218,7 +222,7 @@ impl IPipe for PostgresPipe {
             if peek_result.is_empty() {
                 log::info!("No new changes found, waiting for next iteration...");
                 tokio::time::sleep(std::time::Duration::from_millis(
-                    self.postgres_config.sleep_millis_when_peek_is_empty,
+                    self.config.sleep_millis_when_peek_is_empty,
                 ))
                 .await;
                 continue;
@@ -319,7 +323,7 @@ impl IPipe for PostgresPipe {
                                 "Failed to execute delete query for {schema_name}.{table_name}: {error}"
                             );
                             tokio::time::sleep(std::time::Duration::from_millis(
-                                self.postgres_config.sleep_millis_when_write_failed,
+                                self.config.sleep_millis_when_write_failed,
                             ))
                             .await;
 
@@ -357,7 +361,7 @@ impl IPipe for PostgresPipe {
                     {
                         log::error!("Failed to execute insert query for {table_name}: {error}");
                         tokio::time::sleep(std::time::Duration::from_millis(
-                            self.postgres_config.sleep_millis_when_write_failed,
+                            self.config.sleep_millis_when_write_failed,
                         ))
                         .await;
 
@@ -609,6 +613,7 @@ impl IntoClickhouse for PostgresPipe {}
 
 pub async fn run_postgres_pipe(config: Configuraion) {
     let mut pipe = PostgresPipe::new(
+        config.clone(),
         config.source.postgres.expect("Postgres config is required"),
         config
             .target
