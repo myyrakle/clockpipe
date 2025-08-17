@@ -231,6 +231,17 @@ impl IPipe for PostgresPipe {
             }
             let mut table_log_map = HashMap::new();
 
+            pub struct InsertBatch<'a> {
+                pub table_info: &'a PostgresPipeTableInfo,
+                pub rows: Vec<PostgresCopyRow>,
+            }
+
+            impl InsertBatch<'_> {
+                pub fn push(&mut self, row: PostgresCopyRow) {
+                    self.rows.push(row);
+                }
+            }
+
             let mut batch_insert_queue = HashMap::new();
 
             for row in peek_result.iter() {
@@ -252,9 +263,18 @@ impl IPipe for PostgresPipe {
 
                 match parsed_row.message_type {
                     MessageType::Insert | MessageType::Update => {
+                        let table_info = self
+                            .context
+                            .tables_map
+                            .get(&format!("{schema_name}.{table_name}"))
+                            .expect("Table info not found in context");
+
                         batch_insert_queue
                             .entry(table_name)
-                            .or_insert_with(Vec::new)
+                            .or_insert_with(|| InsertBatch {
+                                table_info,
+                                rows: Vec::new(),
+                            })
                             .push(PostgresCopyRow {
                                 columns: parsed_row.payload,
                             });
@@ -320,19 +340,13 @@ impl IPipe for PostgresPipe {
                 }
             }
 
-            for (table_name, rows) in batch_insert_queue.iter() {
-                let source_table_info = self
-                    .context
-                    .tables_map
-                    .get(&format!("{}.{}", table_name, table_name))
-                    .expect("Table info not found in context");
-
+            for (table_name, batch) in batch_insert_queue.iter() {
                 let insert_query = self.generate_insert_query(
                     &self.clickhouse_config,
-                    &source_table_info.clickhouse_columns,
-                    &source_table_info.postgres_columns,
+                    &batch.table_info.clickhouse_columns,
+                    &batch.table_info.postgres_columns,
                     table_name,
-                    rows,
+                    &batch.rows,
                 );
 
                 if !insert_query.is_empty() {
