@@ -235,18 +235,19 @@ impl IPipe for PostgresPipe {
             }
             let mut table_log_map = HashMap::new();
 
-            pub struct InsertBatch<'a> {
+            pub struct BatchWriteEntry<'a> {
                 pub table_info: &'a PostgresPipeTableInfo,
                 pub rows: Vec<PostgresCopyRow>,
             }
 
-            impl InsertBatch<'_> {
+            impl BatchWriteEntry<'_> {
                 pub fn push(&mut self, row: PostgresCopyRow) {
                     self.rows.push(row);
                 }
             }
 
             let mut batch_insert_queue = HashMap::new();
+            let mut batch_delete_queue = HashMap::new();
 
             for row in peek_result.iter() {
                 let Some(parsed_row) =
@@ -275,7 +276,7 @@ impl IPipe for PostgresPipe {
 
                         batch_insert_queue
                             .entry(table_name)
-                            .or_insert_with(|| InsertBatch {
+                            .or_insert_with(|| BatchWriteEntry {
                                 table_info,
                                 rows: Vec::new(),
                             })
@@ -304,31 +305,15 @@ impl IPipe for PostgresPipe {
                             .get(&format!("{schema_name}.{table_name}"))
                             .expect("Table info not found in context");
 
-                        let delete_query = self.generate_delete_query(
-                            &self.clickhouse_config,
-                            &source_table_info.clickhouse_columns,
-                            &source_table_info.postgres_columns,
-                            table_name,
-                            &[PostgresCopyRow {
+                        batch_delete_queue
+                            .entry(table_name)
+                            .or_insert_with(|| BatchWriteEntry {
+                                table_info: source_table_info,
+                                rows: Vec::new(),
+                            })
+                            .push(PostgresCopyRow {
                                 columns: parsed_row.payload,
-                            }],
-                        );
-
-                        if let Err(error) = self
-                            .clickhouse_connection
-                            .execute_query(&delete_query)
-                            .await
-                        {
-                            log::error!(
-                                "Failed to execute delete query for {schema_name}.{table_name}: {error}"
-                            );
-                            tokio::time::sleep(std::time::Duration::from_millis(
-                                self.config.sleep_millis_when_write_failed,
-                            ))
-                            .await;
-
-                            continue;
-                        }
+                            });
 
                         let count = table_log_map
                             .entry(format!("{schema_name}.{table_name}"))
@@ -344,6 +329,7 @@ impl IPipe for PostgresPipe {
                 }
             }
 
+            // Insert/Update rows in ClickHouse
             for (table_name, batch) in batch_insert_queue.iter() {
                 let insert_query = self.generate_insert_query(
                     &self.clickhouse_config,
@@ -360,6 +346,35 @@ impl IPipe for PostgresPipe {
                         .await
                     {
                         log::error!("Failed to execute insert query for {table_name}: {error}");
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            self.config.sleep_millis_when_write_failed,
+                        ))
+                        .await;
+
+                        continue;
+                    }
+
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                }
+            }
+
+            // Delete rows in ClickHouse
+            for (table_name, batch) in batch_delete_queue.iter() {
+                let delete_query = self.generate_delete_query(
+                    &self.clickhouse_config,
+                    &batch.table_info.clickhouse_columns,
+                    &batch.table_info.postgres_columns,
+                    table_name,
+                    &batch.rows,
+                );
+
+                if !delete_query.is_empty() {
+                    if let Err(error) = self
+                        .clickhouse_connection
+                        .execute_query(&delete_query)
+                        .await
+                    {
+                        log::error!("Failed to execute delete query for {table_name}: {error}");
                         tokio::time::sleep(std::time::Duration::from_millis(
                             self.config.sleep_millis_when_write_failed,
                         ))

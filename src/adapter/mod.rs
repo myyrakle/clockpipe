@@ -181,6 +181,10 @@ pub trait IntoClickhouse {
         IntoClickhouseColumnType: IntoClickhouseColumn,
         IntoClickhouseRowType: IntoClickhouseRow,
     {
+        if row.is_empty() {
+            return String::new();
+        }
+
         let mut delete_query = format!(
             "ALTER TABLE {}.{table_name} DELETE WHERE ",
             clickhouse_config.connection.database
@@ -210,6 +214,10 @@ pub trait IntoClickhouse {
             }
 
             conditions.push(format!("({})", conditions_per_row.join(" AND ")));
+        }
+
+        if conditions.is_empty() {
+            return String::new();
         }
 
         delete_query.push_str(&conditions.join(" OR "));
