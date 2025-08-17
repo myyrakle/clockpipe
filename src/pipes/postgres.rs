@@ -231,6 +231,19 @@ impl IPipe for PostgresPipe {
             }
             let mut table_log_map = HashMap::new();
 
+            pub struct InsertBatch<'a> {
+                pub table_info: &'a PostgresPipeTableInfo,
+                pub rows: Vec<PostgresCopyRow>,
+            }
+
+            impl InsertBatch<'_> {
+                pub fn push(&mut self, row: PostgresCopyRow) {
+                    self.rows.push(row);
+                }
+            }
+
+            let mut batch_insert_queue = HashMap::new();
+
             for row in peek_result.iter() {
                 let Some(parsed_row) =
                     parse_pg_output(&row.data).expect("Failed to parse PgOutput")
@@ -250,37 +263,21 @@ impl IPipe for PostgresPipe {
 
                 match parsed_row.message_type {
                     MessageType::Insert | MessageType::Update => {
-                        let source_table_info = self
+                        let table_info = self
                             .context
                             .tables_map
                             .get(&format!("{schema_name}.{table_name}"))
                             .expect("Table info not found in context");
 
-                        let insert_query = self.generate_insert_query(
-                            &self.clickhouse_config,
-                            &source_table_info.clickhouse_columns,
-                            &source_table_info.postgres_columns,
-                            table_name,
-                            &[PostgresCopyRow {
+                        batch_insert_queue
+                            .entry(table_name)
+                            .or_insert_with(|| InsertBatch {
+                                table_info,
+                                rows: Vec::new(),
+                            })
+                            .push(PostgresCopyRow {
                                 columns: parsed_row.payload,
-                            }],
-                        );
-
-                        if let Err(error) = self
-                            .clickhouse_connection
-                            .execute_query(&insert_query)
-                            .await
-                        {
-                            log::error!(
-                                "Failed to execute insert query for {schema_name}.{table_name}: {error}"
-                            );
-                            tokio::time::sleep(std::time::Duration::from_millis(
-                                self.postgres_config.sleep_millis_when_write_failed,
-                            ))
-                            .await;
-
-                            continue;
-                        }
+                            });
 
                         let count = table_log_map
                             .entry(format!("{schema_name}.{table_name}"))
@@ -343,6 +340,34 @@ impl IPipe for PostgresPipe {
                 }
             }
 
+            for (table_name, batch) in batch_insert_queue.iter() {
+                let insert_query = self.generate_insert_query(
+                    &self.clickhouse_config,
+                    &batch.table_info.clickhouse_columns,
+                    &batch.table_info.postgres_columns,
+                    table_name,
+                    &batch.rows,
+                );
+
+                if !insert_query.is_empty() {
+                    if let Err(error) = self
+                        .clickhouse_connection
+                        .execute_query(&insert_query)
+                        .await
+                    {
+                        log::error!("Failed to execute insert query for {table_name}: {error}");
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            self.postgres_config.sleep_millis_when_write_failed,
+                        ))
+                        .await;
+
+                        continue;
+                    }
+
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                }
+            }
+
             // Advance the exporter
             if let Some(last) = peek_result.last() {
                 let advance_key = &last.lsn;
@@ -367,6 +392,8 @@ impl IPipe for PostgresPipe {
                     count.delete_count
                 );
             }
+
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await
         }
     }
 }
