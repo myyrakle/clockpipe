@@ -11,7 +11,7 @@ use crate::{
     },
     config::Configuraion,
     errors::Errors,
-    pipes::IPipe,
+    pipes::{IPipe, WriteCounter},
 };
 
 #[derive(Debug, Clone, Default)]
@@ -217,8 +217,6 @@ impl IPipe for PostgresPipe {
                 }
             };
 
-            // parse peeked rows
-
             if peek_result.is_empty() {
                 log::info!("No new changes found, waiting for next iteration...");
                 tokio::time::sleep(std::time::Duration::from_millis(
@@ -228,26 +226,12 @@ impl IPipe for PostgresPipe {
                 continue;
             }
 
-            pub struct Count {
-                pub insert_count: usize,
-                pub update_count: usize,
-                pub delete_count: usize,
-            }
             let mut table_log_map = HashMap::new();
 
-            pub struct InsertBatch<'a> {
-                pub table_info: &'a PostgresPipeTableInfo,
-                pub rows: Vec<PostgresCopyRow>,
-            }
-
-            impl InsertBatch<'_> {
-                pub fn push(&mut self, row: PostgresCopyRow) {
-                    self.rows.push(row);
-                }
-            }
-
             let mut batch_insert_queue = HashMap::new();
+            let mut batch_delete_queue = HashMap::new();
 
+            // 2. Parse peeked rows, group by table and prepare for insert/update/delete
             for row in peek_result.iter() {
                 let Some(parsed_row) =
                     parse_pg_output(&row.data).expect("Failed to parse PgOutput")
@@ -275,7 +259,7 @@ impl IPipe for PostgresPipe {
 
                         batch_insert_queue
                             .entry(table_name)
-                            .or_insert_with(|| InsertBatch {
+                            .or_insert_with(|| BatchWriteEntry {
                                 table_info,
                                 rows: Vec::new(),
                             })
@@ -285,11 +269,7 @@ impl IPipe for PostgresPipe {
 
                         let count = table_log_map
                             .entry(format!("{schema_name}.{table_name}"))
-                            .or_insert(Count {
-                                insert_count: 0,
-                                update_count: 0,
-                                delete_count: 0,
-                            });
+                            .or_insert(WriteCounter::default());
 
                         if parsed_row.message_type == MessageType::Insert {
                             count.insert_count += 1;
@@ -304,39 +284,19 @@ impl IPipe for PostgresPipe {
                             .get(&format!("{schema_name}.{table_name}"))
                             .expect("Table info not found in context");
 
-                        let delete_query = self.generate_delete_query(
-                            &self.clickhouse_config,
-                            &source_table_info.clickhouse_columns,
-                            &source_table_info.postgres_columns,
-                            table_name,
-                            &PostgresCopyRow {
+                        batch_delete_queue
+                            .entry(table_name)
+                            .or_insert_with(|| BatchWriteEntry {
+                                table_info: source_table_info,
+                                rows: Vec::new(),
+                            })
+                            .push(PostgresCopyRow {
                                 columns: parsed_row.payload,
-                            },
-                        );
-
-                        if let Err(error) = self
-                            .clickhouse_connection
-                            .execute_query(&delete_query)
-                            .await
-                        {
-                            log::error!(
-                                "Failed to execute delete query for {schema_name}.{table_name}: {error}"
-                            );
-                            tokio::time::sleep(std::time::Duration::from_millis(
-                                self.config.sleep_millis_when_write_failed,
-                            ))
-                            .await;
-
-                            continue;
-                        }
+                            });
 
                         let count = table_log_map
                             .entry(format!("{schema_name}.{table_name}"))
-                            .or_insert(Count {
-                                insert_count: 0,
-                                update_count: 0,
-                                delete_count: 0,
-                            });
+                            .or_insert(WriteCounter::default());
 
                         count.delete_count += 1;
                     }
@@ -344,6 +304,7 @@ impl IPipe for PostgresPipe {
                 }
             }
 
+            // 3. Insert/Update rows in ClickHouse
             for (table_name, batch) in batch_insert_queue.iter() {
                 let insert_query = self.generate_insert_query(
                     &self.clickhouse_config,
@@ -372,7 +333,36 @@ impl IPipe for PostgresPipe {
                 }
             }
 
-            // Advance the exporter
+            // 4. Delete rows in ClickHouse
+            for (table_name, batch) in batch_delete_queue.iter() {
+                let delete_query = self.generate_delete_query(
+                    &self.clickhouse_config,
+                    &batch.table_info.clickhouse_columns,
+                    &batch.table_info.postgres_columns,
+                    table_name,
+                    &batch.rows,
+                );
+
+                if !delete_query.is_empty() {
+                    if let Err(error) = self
+                        .clickhouse_connection
+                        .execute_query(&delete_query)
+                        .await
+                    {
+                        log::error!("Failed to execute delete query for {table_name}: {error}");
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            self.config.sleep_millis_when_write_failed,
+                        ))
+                        .await;
+
+                        continue;
+                    }
+
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                }
+            }
+
+            // 5. Move cursor for next peek
             if let Some(last) = peek_result.last() {
                 let advance_key = &last.lsn;
 
@@ -386,7 +376,7 @@ impl IPipe for PostgresPipe {
                 }
             }
 
-            // Log the changes
+            // 6. Log the changes
             for (table_name, count) in table_log_map.iter() {
                 log::info!(
                     "Table [{}]: Inserted: {}, Updated: {}, Deleted: {}",
@@ -631,5 +621,16 @@ pub async fn run_postgres_pipe(config: Configuraion) {
         _ = pipe.run_pipe() => {
             log::info!("Postgres pipe running...");
         }
+    }
+}
+
+pub struct BatchWriteEntry<'a> {
+    pub table_info: &'a PostgresPipeTableInfo,
+    pub rows: Vec<PostgresCopyRow>,
+}
+
+impl BatchWriteEntry<'_> {
+    pub fn push(&mut self, row: PostgresCopyRow) {
+        self.rows.push(row);
     }
 }

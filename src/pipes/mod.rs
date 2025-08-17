@@ -18,3 +18,10 @@ pub trait IPipe {
     async fn first_sync(&self);
     async fn sync_loop(&self);
 }
+
+#[derive(Debug, Clone, Default)]
+pub struct WriteCounter {
+    pub insert_count: usize,
+    pub update_count: usize,
+    pub delete_count: usize,
+}
