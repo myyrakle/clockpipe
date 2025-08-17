@@ -175,13 +175,13 @@ pub trait IntoClickhouse {
         clickhouse_columns: &[ClickhouseColumn],
         source_columns: &[IntoClickhouseColumnType],
         table_name: &str,
-        row: &[IntoClickhouseRowType],
+        rows: &[IntoClickhouseRowType],
     ) -> String
     where
         IntoClickhouseColumnType: IntoClickhouseColumn,
         IntoClickhouseRowType: IntoClickhouseRow,
     {
-        if row.is_empty() {
+        if rows.is_empty() {
             return String::new();
         }
 
@@ -197,7 +197,7 @@ pub trait IntoClickhouse {
 
         let mut conditions = vec![];
 
-        for row in row.iter() {
+        for row in rows.iter() {
             let mut conditions_per_row = vec![];
 
             for clickhouse_column in primary_key_columns.iter() {

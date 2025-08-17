@@ -11,7 +11,7 @@ use crate::{
     },
     config::Configuraion,
     errors::Errors,
-    pipes::IPipe,
+    pipes::{IPipe, WriteCounter},
 };
 
 #[derive(Debug, Clone, Default)]
@@ -228,23 +228,7 @@ impl IPipe for PostgresPipe {
                 continue;
             }
 
-            pub struct Count {
-                pub insert_count: usize,
-                pub update_count: usize,
-                pub delete_count: usize,
-            }
             let mut table_log_map = HashMap::new();
-
-            pub struct BatchWriteEntry<'a> {
-                pub table_info: &'a PostgresPipeTableInfo,
-                pub rows: Vec<PostgresCopyRow>,
-            }
-
-            impl BatchWriteEntry<'_> {
-                pub fn push(&mut self, row: PostgresCopyRow) {
-                    self.rows.push(row);
-                }
-            }
 
             let mut batch_insert_queue = HashMap::new();
             let mut batch_delete_queue = HashMap::new();
@@ -286,11 +270,7 @@ impl IPipe for PostgresPipe {
 
                         let count = table_log_map
                             .entry(format!("{schema_name}.{table_name}"))
-                            .or_insert(Count {
-                                insert_count: 0,
-                                update_count: 0,
-                                delete_count: 0,
-                            });
+                            .or_insert(WriteCounter::default());
 
                         if parsed_row.message_type == MessageType::Insert {
                             count.insert_count += 1;
@@ -317,11 +297,7 @@ impl IPipe for PostgresPipe {
 
                         let count = table_log_map
                             .entry(format!("{schema_name}.{table_name}"))
-                            .or_insert(Count {
-                                insert_count: 0,
-                                update_count: 0,
-                                delete_count: 0,
-                            });
+                            .or_insert(WriteCounter::default());
 
                         count.delete_count += 1;
                     }
@@ -646,5 +622,16 @@ pub async fn run_postgres_pipe(config: Configuraion) {
         _ = pipe.run_pipe() => {
             log::info!("Postgres pipe running...");
         }
+    }
+}
+
+pub struct BatchWriteEntry<'a> {
+    pub table_info: &'a PostgresPipeTableInfo,
+    pub rows: Vec<PostgresCopyRow>,
+}
+
+impl BatchWriteEntry<'_> {
+    pub fn push(&mut self, row: PostgresCopyRow) {
+        self.rows.push(row);
     }
 }
