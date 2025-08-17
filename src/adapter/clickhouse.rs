@@ -134,7 +134,7 @@ impl ClickhouseColumn {
             "String" | "Nullable(String)" => value.to_string(),
             "Date" | "Date32" | "Nullable(Date)" | "Nullable(Date32)" => value.to_date(),
             "DateTime" | "DateTime64" | "Nullable(DateTime)" | "Nullable(DateTime64)" => {
-                value.to_real()
+                value.to_datetime()
             }
             "Time" | "Time64" | "Nullable(Time)" | "Nullable(Time64)" => value.to_time(),
             "Array(String)" => value.to_string_array(),
