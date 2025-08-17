@@ -1,6 +1,6 @@
 # clockpipe
 
-![](https://img.shields.io/badge/language-Rust-red) ![](https://img.shields.io/badge/version-0.3.0-brightgreen) [![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/myyrakle/clockpipe/blob/master/LICENSE)
+![](https://img.shields.io/badge/language-Rust-red) ![](https://img.shields.io/badge/version-0.3.1-brightgreen) [![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/myyrakle/clockpipe/blob/master/LICENSE)
 
 - An alternative to clickpipe for on-premise clickhouse users.
 - Based on CDC, data from the original source is written to clickhouse.
@@ -101,5 +101,7 @@ clockpipe run --config-file ./clockpipe-config.json
 - You can also adjust the log level. You can set values such as error, warn, info, and debug to the "RUST_LOG" environment variable.
 
 ```
-RUST_LOG=debug cargo run -- run --config-file ./clockpipe-config.json
+RUST_LOG=debug clockpipe run --config-file ./clockpipe-config.json
 ```
+
+- Columns added from the source will also be automatically synchronized after the initial table link. (if restarted)
