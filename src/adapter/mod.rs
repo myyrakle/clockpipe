@@ -82,7 +82,7 @@ pub trait IntoClickhouse {
             query.push_str(format!(" ORDER BY ({primary_keys})").as_str());
         }
         query.push_str("SETTINGS");
-        query.push_str(format!(" index_granularity = {INDEX_GRANULARITY}, ").as_str());
+        query.push_str(format!(" index_granularity = {INDEX_GRANULARITY}, ",).as_str());
         query.push_str(
             format!(" min_age_to_force_merge_seconds = {MIN_AGE_TO_FORCE_MERGE_SECONDS}",).as_str(),
         );
@@ -175,7 +175,7 @@ pub trait IntoClickhouse {
         clickhouse_columns: &[ClickhouseColumn],
         source_columns: &[IntoClickhouseColumnType],
         table_name: &str,
-        row: &IntoClickhouseRowType,
+        row: &[IntoClickhouseRowType],
     ) -> String
     where
         IntoClickhouseColumnType: IntoClickhouseColumn,
@@ -186,25 +186,33 @@ pub trait IntoClickhouse {
             clickhouse_config.connection.database
         );
 
+        let primary_key_columns: Vec<_> = clickhouse_columns
+            .iter()
+            .filter(|col| col.is_in_primary_key)
+            .collect();
+
         let mut conditions = vec![];
 
-        for clickhouse_column in clickhouse_columns.iter() {
-            if !clickhouse_column.is_in_primary_key {
-                continue;
+        for row in row.iter() {
+            let mut conditions_per_row = vec![];
+
+            for clickhouse_column in primary_key_columns.iter() {
+                let raw_value: Option<_> =
+                    row.find_value_by_column_name(source_columns, &clickhouse_column.column_name);
+
+                let column_value =
+                    clickhouse_column.to_clickhouse_value(raw_value.unwrap_or_default());
+
+                conditions_per_row.push(format!(
+                    "{} = {}",
+                    clickhouse_column.column_name, column_value
+                ));
             }
 
-            let raw_value: Option<_> =
-                row.find_value_by_column_name(source_columns, &clickhouse_column.column_name);
-
-            let column_value = clickhouse_column.to_clickhouse_value(raw_value.unwrap_or_default());
-
-            conditions.push(format!(
-                "{} = {}",
-                clickhouse_column.column_name, column_value
-            ));
+            conditions.push(format!("({})", conditions_per_row.join(" AND ")));
         }
 
-        delete_query.push_str(&conditions.join(" AND "));
+        delete_query.push_str(&conditions.join(" OR "));
 
         delete_query
     }

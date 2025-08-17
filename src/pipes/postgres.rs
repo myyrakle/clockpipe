@@ -309,9 +309,9 @@ impl IPipe for PostgresPipe {
                             &source_table_info.clickhouse_columns,
                             &source_table_info.postgres_columns,
                             table_name,
-                            &PostgresCopyRow {
+                            &[PostgresCopyRow {
                                 columns: parsed_row.payload,
-                            },
+                            }],
                         );
 
                         if let Err(error) = self
