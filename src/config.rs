@@ -11,8 +11,8 @@ pub struct Configuraion {
     pub sleep_millis_when_peek_is_empty: u64,
     #[serde(default = "default::sleep_millis_when_write_failed")]
     pub sleep_millis_when_write_failed: u64,
-    #[serde(default = "default::sleep_millis_after_sync_cycle")]
-    pub sleep_millis_after_sync_cycle: u64,
+    #[serde(default = "default::sleep_millis_after_sync_iteration")]
+    pub sleep_millis_after_sync_iteration: u64,
     #[serde(default = "default::sleep_millis_after_sync_write")]
     pub sleep_millis_after_sync_write: u64,
     #[serde(default = "default::peek_changes_limit")]
@@ -92,9 +92,9 @@ pub mod default {
         SLEEP_MILLIS_WHEN_WRITE_FAILED
     }
 
-    pub const SLEEP_MILLIS_AFTER_SYNC_CYCLE: u64 = 100;
-    pub fn sleep_millis_after_sync_cycle() -> u64 {
-        SLEEP_MILLIS_AFTER_SYNC_CYCLE
+    pub const SLEEP_MILLIS_AFTER_SYNC_ITERATION: u64 = 100;
+    pub fn sleep_millis_after_sync_iteration() -> u64 {
+        SLEEP_MILLIS_AFTER_SYNC_ITERATION
     }
 
     pub const SLEEP_MILLIS_AFTER_SYNC_WRITE: u64 = 100;
