@@ -247,4 +247,16 @@ impl ClickhouseConnection {
 
         Ok(exists)
     }
+
+    pub async fn truncate_table(&self, schema_name: &str, table_name: &str) -> errors::Result<()> {
+        let query = format!("TRUNCATE TABLE {schema_name}.{table_name}");
+
+        self.execute_query(&query).await.map_err(|e| {
+            crate::errors::Errors::DatabaseQueryError(format!(
+                "Failed to truncate table {schema_name}.{table_name}: {e}"
+            ))
+        })?;
+
+        Ok(())
+    }
 }
