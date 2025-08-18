@@ -315,6 +315,33 @@ impl IPipe for PostgresPipe {
 
                         count.delete_count += 1;
                     }
+                    MessageType::Truncate => {
+                        // Truncate is handled separately, no need to queue
+
+                        let database = &self.clickhouse_config.connection.database;
+
+                        if let Err(error) = self
+                            .clickhouse_connection
+                            .truncate_table(database, table_name)
+                            .await
+                        {
+                            log::error!(
+                                "Failed to truncate table {}.{}: {}",
+                                schema_name,
+                                table_name,
+                                error
+                            );
+
+                            tokio::time::sleep(std::time::Duration::from_millis(
+                                self.config.sleep_millis_when_write_failed,
+                            ))
+                            .await;
+
+                            continue;
+                        }
+
+                        log::info!("Table {}.{} was truncated.", schema_name, table_name);
+                    }
                     _ => {}
                 }
             }
