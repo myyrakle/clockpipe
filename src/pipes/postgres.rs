@@ -268,7 +268,7 @@ impl IPipe for PostgresPipe {
                                 t.table_name == table_name.as_str()
                                     && t.schema_name == schema_name.as_str()
                             })
-                            .map_or_else(|| Vec::new(), |t| t.mask_columns.clone());
+                            .map_or_else(Vec::new, |t| t.mask_columns.clone());
 
                         batch_insert_queue
                             .entry(table_name)
