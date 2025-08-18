@@ -196,7 +196,7 @@ impl IPipe for PostgresPipe {
         let publication_name = &self.postgres_config.publication_name;
         let replication_slot_name = &self.postgres_config.replication_slot_name;
 
-        loop {
+        'SYNC_LOOP: loop {
             // 1. Peek new rows
             let peek_result = self
                 .postgres_connection
@@ -216,7 +216,7 @@ impl IPipe for PostgresPipe {
                         self.config.sleep_millis_when_peek_failed,
                     ))
                     .await;
-                    continue;
+                    continue 'SYNC_LOOP;
                 }
             };
 
@@ -226,7 +226,7 @@ impl IPipe for PostgresPipe {
                     self.config.sleep_millis_when_peek_is_empty,
                 ))
                 .await;
-                continue;
+                continue 'SYNC_LOOP;
             }
 
             let mut table_log_map = HashMap::new();
@@ -337,7 +337,7 @@ impl IPipe for PostgresPipe {
                             ))
                             .await;
 
-                            continue;
+                            continue 'SYNC_LOOP;
                         }
 
                         log::info!("Table {}.{} was truncated.", schema_name, table_name);
@@ -369,7 +369,7 @@ impl IPipe for PostgresPipe {
                         ))
                         .await;
 
-                        continue;
+                        continue 'SYNC_LOOP;
                     }
 
                     tokio::time::sleep(std::time::Duration::from_millis(
@@ -401,7 +401,7 @@ impl IPipe for PostgresPipe {
                         ))
                         .await;
 
-                        continue;
+                        continue 'SYNC_LOOP;
                     }
 
                     tokio::time::sleep(std::time::Duration::from_millis(
@@ -421,7 +421,7 @@ impl IPipe for PostgresPipe {
                     .await
                 {
                     log::error!("Error advancing exporter: {e:?}");
-                    continue;
+                    continue 'SYNC_LOOP;
                 }
             }
 
