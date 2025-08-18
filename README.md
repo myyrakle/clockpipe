@@ -1,6 +1,6 @@
 # clockpipe
 
-![](https://img.shields.io/badge/language-Rust-red) ![](https://img.shields.io/badge/version-0.4.0-brightgreen) [![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/myyrakle/clockpipe/blob/master/LICENSE)
+![](https://img.shields.io/badge/language-Rust-red) ![](https://img.shields.io/badge/version-0.4.1-brightgreen) [![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/myyrakle/clockpipe/blob/master/LICENSE)
 
 - An alternative to clickpipe for on-premise clickhouse users.
 - Based on CDC, data from the original source is written to clickhouse.
@@ -28,7 +28,7 @@ cargo install clockpipe
 Using Docker
 
 ```bash
-sudo docker run -v $(pwd)/clockpipe-config.json:/app/config.json --network host myyrakle/clockpipe:v0.4.0
+sudo docker run -v $(pwd)/clockpipe-config.json:/app/config.json --network host myyrakle/clockpipe:v0.4.1
 ```
 
 ## PostgreSQL Setup
