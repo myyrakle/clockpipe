@@ -97,21 +97,21 @@ impl IntoClickhouseValue for PgOutputValue {
     fn to_date(self) -> String {
         format!(
             "toDate('{}')",
-            Self::cut_millisecond(&self.text_or("current_date()".to_string()))
+            Self::format_date_time(&self.text_or("current_date()".to_string()))
         )
     }
 
     fn to_datetime(self) -> String {
         format!(
             "toDateTime('{}')",
-            Self::cut_millisecond(&self.text_or("now()".to_string()))
+            Self::format_date_time(&self.text_or("now()".to_string()))
         )
     }
 
     fn to_time(self) -> String {
         format!(
             "toTime('{}')",
-            Self::cut_millisecond(&self.text_or("now()".to_string()))
+            Self::format_date_time(&self.text_or("now()".to_string()))
         )
     }
 
@@ -139,14 +139,6 @@ impl IntoClickhouseValue for PgOutputValue {
 }
 
 impl PgOutputValue {
-    pub fn cut_millisecond(date_text: &str) -> String {
-        if let Some(pos) = date_text.find('.') {
-            date_text[..pos].to_string()
-        } else {
-            date_text.to_string()
-        }
-    }
-
     pub fn parse_bool(value: &str) -> String {
         match value.to_lowercase().as_str() {
             "t" | "1" | "true" => "TRUE".to_string(),
@@ -195,6 +187,30 @@ impl PgOutputValue {
         let trimmed = value.trim_matches('"');
         let items: Vec<String> = trimmed.split("\",\"").map(|s| s.to_string()).collect();
         items
+    }
+
+    /*
+    다앙한 형태의 datetime 타입을 '2025-08-18 03:56:32' 형태로 변환하는 함수
+    입력 예시
+    1. '2025-08-18 05:16:08.490845+00'
+    2. '2025-08-18 05:16:08.860455'
+    3. '2025-08-17 22:00:00+00'
+    4. '2020-03-09'
+    */
+    pub fn format_date_time(source: &str) -> String {
+        // .가 있는 경우 . 오른쪽을 잘라서 버립니다.
+        let formatted = if let Some(pos) = source.find('.') {
+            source[..pos].to_string()
+        } else {
+            source.to_string()
+        };
+
+        // +가 있는 경우 + 오른쪽을 잘라서 버립니다.
+        if let Some(pos) = formatted.find('+') {
+            formatted[..pos].to_string()
+        } else {
+            formatted
+        }
     }
 }
 
@@ -392,6 +408,38 @@ mod tests {
 
         for test_case in test_cases {
             let result = PgOutputValue::parse_string_array(test_case.input);
+            assert_eq!(
+                result, test_case.expected,
+                "Failed for input: {}",
+                test_case.input
+            );
+        }
+    }
+
+    #[test]
+    fn test_format_date_time() {
+        struct TestCase {
+            input: &'static str,
+            expected: &'static str,
+        }
+
+        let test_cases = vec![
+            TestCase {
+                input: "2025-08-18 05:16:08.490845+00",
+                expected: "2025-08-18 05:16:08",
+            },
+            TestCase {
+                input: "2025-08-18 05:16:08.860455",
+                expected: "2025-08-18 05:16:08",
+            },
+            TestCase {
+                input: "2025-08-17 22:00:00+00",
+                expected: "2025-08-17 22:00:00",
+            },
+        ];
+
+        for test_case in test_cases {
+            let result = PgOutputValue::format_date_time(test_case.input);
             assert_eq!(
                 result, test_case.expected,
                 "Failed for input: {}",
