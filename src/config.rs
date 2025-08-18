@@ -127,6 +127,8 @@ pub struct PostgresSource {
     pub table_name: String,
     #[serde(default)]
     pub skip_copy: bool,
+    #[serde(default)]
+    pub mask_columns: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

@@ -156,6 +156,8 @@ impl IPipe for PostgresPipe {
                 .get(&format!("{schema_name}.{table_name}"))
                 .expect("Table info not found in context");
 
+            let mask_columns = &table.mask_columns;
+
             let chunks = rows.chunks(100000);
             let chunk_count = chunks.len();
 
@@ -171,6 +173,7 @@ impl IPipe for PostgresPipe {
                     &self.clickhouse_config,
                     &source_table_info.clickhouse_columns,
                     &source_table_info.postgres_columns,
+                    mask_columns,
                     &table.table_name,
                     chunk,
                 );
@@ -257,10 +260,21 @@ impl IPipe for PostgresPipe {
                             .get(&format!("{schema_name}.{table_name}"))
                             .expect("Table info not found in context");
 
+                        let mask_columns = self
+                            .postgres_config
+                            .tables
+                            .iter()
+                            .find(|t| {
+                                t.table_name == table_name.as_str()
+                                    && t.schema_name == schema_name.as_str()
+                            })
+                            .map_or_else(|| Vec::new(), |t| t.mask_columns.clone());
+
                         batch_insert_queue
                             .entry(table_name)
                             .or_insert_with(|| BatchWriteEntry {
                                 table_info,
+                                mask_columns,
                                 rows: Vec::new(),
                             })
                             .push(PostgresCopyRow {
@@ -288,6 +302,7 @@ impl IPipe for PostgresPipe {
                             .entry(table_name)
                             .or_insert_with(|| BatchWriteEntry {
                                 table_info: source_table_info,
+                                mask_columns: Vec::new(),
                                 rows: Vec::new(),
                             })
                             .push(PostgresCopyRow {
@@ -310,6 +325,7 @@ impl IPipe for PostgresPipe {
                     &self.clickhouse_config,
                     &batch.table_info.clickhouse_columns,
                     &batch.table_info.postgres_columns,
+                    &batch.mask_columns,
                     table_name,
                     &batch.rows,
                 );
@@ -635,6 +651,7 @@ pub async fn run_postgres_pipe(config: Configuraion) {
 
 pub struct BatchWriteEntry<'a> {
     pub table_info: &'a PostgresPipeTableInfo,
+    pub mask_columns: Vec<String>,
     pub rows: Vec<PostgresCopyRow>,
 }
 
