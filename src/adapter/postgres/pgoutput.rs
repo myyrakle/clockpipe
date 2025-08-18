@@ -246,6 +246,7 @@ pub fn parse_pg_output(bytes: &[u8]) -> errors::Result<Option<PgOutput>> {
         }
         MessageType::Insert | MessageType::Update | MessageType::Delete | MessageType::Truncate => {
             let pg_output = parse_pg_output_write(message_type, bytes)?;
+
             Ok(Some(pg_output))
         }
     }
@@ -261,13 +262,13 @@ fn parse_pg_output_write(message_type: MessageType, bytes: &[u8]) -> errors::Res
         payload: Vec::new(),
     };
 
-    // Read relation ID (4 bytes)
-    pg_output.relation_id = cursor.read_u32::<byteorder::BigEndian>().map_err(|e| {
-        errors::Errors::PgOutputParseError(format!("Failed to read relation ID: {e}"))
-    })?;
-
     match message_type {
         MessageType::Insert => {
+            // Read relation ID (4 bytes)
+            pg_output.relation_id = cursor.read_u32::<byteorder::BigEndian>().map_err(|e| {
+                errors::Errors::PgOutputParseError(format!("Failed to read relation ID: {e}"))
+            })?;
+
             // Insert: relation_id + 'N' + tuple_data
             let tuple_type_byte = cursor.read_u8().map_err(|e| {
                 errors::Errors::PgOutputParseError(format!("Failed to read tuple type: {e}"))
@@ -278,6 +279,11 @@ fn parse_pg_output_write(message_type: MessageType, bytes: &[u8]) -> errors::Res
             })?);
         }
         MessageType::Update => {
+            // Read relation ID (4 bytes)
+            pg_output.relation_id = cursor.read_u32::<byteorder::BigEndian>().map_err(|e| {
+                errors::Errors::PgOutputParseError(format!("Failed to read relation ID: {e}"))
+            })?;
+
             // Update: relation_id + ('K'|'O'|'N') + tuple_data
             let tuple_type_byte = cursor.read_u8().map_err(|e| {
                 errors::Errors::PgOutputParseError(format!("Failed to read tuple type: {e}"))
@@ -288,6 +294,11 @@ fn parse_pg_output_write(message_type: MessageType, bytes: &[u8]) -> errors::Res
             })?);
         }
         MessageType::Delete => {
+            // Read relation ID (4 bytes)
+            pg_output.relation_id = cursor.read_u32::<byteorder::BigEndian>().map_err(|e| {
+                errors::Errors::PgOutputParseError(format!("Failed to read relation ID: {e}"))
+            })?;
+
             // Delete: relation_id + ('K'|'O') + tuple_data
             let tuple_type_byte = cursor.read_u8().map_err(|e| {
                 errors::Errors::PgOutputParseError(format!("Failed to read tuple type: {e}"))
@@ -298,10 +309,24 @@ fn parse_pg_output_write(message_type: MessageType, bytes: &[u8]) -> errors::Res
             })?);
         }
         MessageType::Truncate => {
-            // Truncate: relation_id + flags + no tuple data
-            let _flags = cursor.read_u8().map_err(|e| {
+            let numbers_of_relation = cursor.read_u32::<byteorder::BigEndian>().map_err(|e| {
                 errors::Errors::PgOutputParseError(format!("Failed to read truncate flags: {e}"))
             })?;
+
+            if numbers_of_relation == 0 {
+                return Err(errors::Errors::PgOutputParseError(
+                    "Truncate message with zero relations is invalid".to_string(),
+                ));
+            }
+
+            let _ = cursor.read_u8().map_err(|e| {
+                errors::Errors::PgOutputParseError(format!("Failed to eat first byte: {e}"))
+            })?;
+
+            pg_output.relation_id = cursor.read_u32::<byteorder::BigEndian>().map_err(|e| {
+                errors::Errors::PgOutputParseError(format!("Failed to read relation ID: {e}"))
+            })?;
+
             // No tuple data for truncate
             return Ok(pg_output);
         }
