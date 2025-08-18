@@ -136,6 +136,10 @@ impl IntoClickhouseValue for PgOutputValue {
     fn unknown_value(self) -> String {
         self.text_or("NULL".to_string())
     }
+
+    fn into_null(self) -> Self {
+        PgOutputValue::Null
+    }
 }
 
 impl PgOutputValue {

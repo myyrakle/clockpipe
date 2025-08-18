@@ -41,6 +41,7 @@ pub trait IntoClickhouseValue {
     fn unknown_value(self) -> String;
 
     fn is_null(&self) -> bool;
+    fn into_null(self) -> Self;
 }
 
 /// Trait for generating Clickhouse queries
@@ -115,6 +116,7 @@ pub trait IntoClickhouse {
         clickhouse_config: &ClickHouseConfig,
         clickhouse_columns: &[ClickhouseColumn],
         source_columns: &[impl IntoClickhouseColumn],
+        mask_columns: &[String],
         table_name: &str,
         rows: &[impl IntoClickhouseRow],
     ) -> String {
@@ -154,8 +156,13 @@ pub trait IntoClickhouse {
                 let raw_value =
                     row.find_value_by_column_name(source_columns, &clickhouse_column.column_name);
 
-                let column_value =
-                    clickhouse_column.to_clickhouse_value(raw_value.unwrap_or_default());
+                let mut raw_value = raw_value.unwrap_or_default();
+
+                if mask_columns.contains(&clickhouse_column.column_name) {
+                    raw_value = raw_value.into_null();
+                }
+
+                let column_value = clickhouse_column.to_clickhouse_value(raw_value);
 
                 value.push(column_value);
             }
