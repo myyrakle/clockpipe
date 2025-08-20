@@ -23,6 +23,7 @@ pub struct Configuraion {
 pub struct Source {
     pub source_type: SourceType,
     pub postgres: Option<PostgresConfig>,
+    pub mongodb: Option<MongoDBConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -58,7 +59,6 @@ pub struct MongoDBConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MongoDBConnectionConfig {
     pub host: String,
-    pub port: u16,
     pub username: String,
     pub password: String,
     pub database: String,
