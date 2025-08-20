@@ -15,6 +15,11 @@
         {
           "schema_name": "public",
           "table_name": "user_table",
+          "mask_columns": ["password"]
+        },
+        {
+          "schema_name": "public",
+          "table_name": "user_table",
           "skip_copy": true
         }
       ]
@@ -31,5 +36,11 @@
         "database": "your_database"
       }
     }
-  }
+  },
+  "sleep_millis_when_peek_failed": 5000,
+  "sleep_millis_when_peek_is_empty": 5000,
+  "sleep_millis_when_write_failed": 5000,
+  "sleep_millis_after_sync_iteration": 100,
+  "sleep_millis_after_sync_write": 100,
+  "peek_changes_limit": 65536
 }
