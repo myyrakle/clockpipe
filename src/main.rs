@@ -37,6 +37,11 @@ async fn main() {
 
                     pipes::run_postgres_pipe(config).await;
                 }
+                config::SourceType::MongoDB => {
+                    log::info!("Start MongoDB pipe");
+
+                    unimplemented!("MongoDB pipe is not implemented yet");
+                }
             }
         }
     }

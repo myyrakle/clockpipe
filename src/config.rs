@@ -35,6 +35,8 @@ pub struct Target {
 pub enum SourceType {
     #[serde(rename = "postgres")]
     Postgres,
+    #[serde(rename = "mongodb")]
+    MongoDB,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -45,6 +47,30 @@ pub struct PostgresConfig {
     pub publication_name: String,
     #[serde(default = "default::postgres::replication_slot_name")]
     pub replication_slot_name: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MongoDBConfig {
+    pub connection: MongoDBConnectionConfig,
+    pub collections: Vec<MongoDBSource>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MongoDBConnectionConfig {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub password: String,
+    pub database: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MongoDBSource {
+    pub collection_name: String,
+    #[serde(default)]
+    pub skip_copy: bool,
+    #[serde(default)]
+    pub mask_fields: Vec<String>,
 }
 
 pub mod default {
