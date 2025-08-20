@@ -1,6 +1,7 @@
 use std::env;
 
 use clap::Parser;
+
 pub mod adapter;
 mod command;
 pub mod config;

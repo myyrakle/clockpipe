@@ -25,4 +25,4 @@ target
 
 /target
 
-clockpipe-config.json
+.*.json
