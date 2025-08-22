@@ -17,6 +17,8 @@ pub struct Configuraion {
     pub sleep_millis_after_sync_write: u64,
     #[serde(default = "default::peek_changes_limit")]
     pub peek_changes_limit: i64,
+    #[serde(default = "default::peek_changes_timeout_millis")]
+    pub peek_changes_timeout_millis: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -54,6 +56,17 @@ pub struct PostgresConfig {
 pub struct MongoDBConfig {
     pub connection: MongoDBConnectionConfig,
     pub collections: Vec<MongoDBSource>,
+    #[serde(default = "default::mongodb::resume_token_file_path")]
+    pub resume_token_path: String,
+    #[serde(default = "ResumeTokenStorageType::default")]
+    pub resume_token_storage: ResumeTokenStorageType,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub enum ResumeTokenStorageType {
+    #[serde(rename = "file")]
+    #[default]
+    File,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -98,9 +111,21 @@ pub mod default {
         }
     }
 
+    pub mod mongodb {
+        pub const RESUME_TOKEN_FILE_PATH: &str = "resume_token.json";
+        pub fn resume_token_file_path() -> String {
+            RESUME_TOKEN_FILE_PATH.to_string()
+        }
+    }
+
     pub const PEEK_CHANGES_LIMIT: i64 = 65536;
     pub fn peek_changes_limit() -> i64 {
         PEEK_CHANGES_LIMIT
+    }
+
+    pub const PEEK_CHANGES_TIMEOUT_MILLIS: u64 = 5000;
+    pub fn peek_changes_timeout_millis() -> u64 {
+        PEEK_CHANGES_TIMEOUT_MILLIS
     }
 
     pub const SLEEP_MILLIS_WHEN_PEEK_FAILED: u64 = 5000;

@@ -18,6 +18,7 @@ pub enum Errors {
     ReplicationSlotAdvanceFailed(String),
     PgOutputParseError(String),
     CopyTableFailed(String),
+    ResumeTokenParseError(String),
 }
 
 pub type Result<T> = std::result::Result<T, Errors>;
@@ -59,6 +60,7 @@ impl std::fmt::Display for Errors {
             }
             Errors::ClickhouseDatabaseError(msg) => write!(f, "ClickHouse database error: {msg}"),
             Errors::CopyTableFailed(msg) => write!(f, "Failed to copy table data: {msg}"),
+            Errors::ResumeTokenParseError(msg) => write!(f, "Failed to parse resume token: {msg}"),
         }
     }
 }

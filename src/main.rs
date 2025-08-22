@@ -41,6 +41,25 @@ async fn main() {
                 config::SourceType::MongoDB => {
                     log::info!("Start MongoDB pipe");
 
+                    // let mongodb_connection =
+                    //     adapter::mongodb::MongoDBConnection::new(&config.source.mongodb.unwrap())
+                    //         .await
+                    //         .expect("Failed to create MongoDB connection");
+                    // mongodb_connection
+                    //     .ping()
+                    //     .await
+                    //     .expect("Failed to ping MongoDB");
+
+                    // let changes = mongodb_connection
+                    //     .peek_changes("cdctest", 10, 10000)
+                    //     .await
+                    //     .unwrap();
+                    // println!("MongoDB changes: {:?}", changes);
+
+                    // mongodb_connection
+                    //     .store_resume_token(&changes.resume_token)
+                    //     .expect("Failed to store resume token");
+
                     unimplemented!("MongoDB pipe is not implemented yet");
                 }
             }
