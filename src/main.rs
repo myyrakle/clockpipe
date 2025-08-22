@@ -45,10 +45,12 @@ async fn main() {
                     //     adapter::mongodb::MongoDBConnection::new(&config.source.mongodb.unwrap())
                     //         .await
                     //         .expect("Failed to create MongoDB connection");
-                    // mongodb_connection
-                    //     .ping()
+
+                    // let result = mongodb_connection
+                    //     .copy_collection_data("cdctest", "log", 10000)
                     //     .await
-                    //     .expect("Failed to ping MongoDB");
+                    //     .unwrap();
+                    // println!("MongoDB copy result: {:?}", result);
 
                     // let changes = mongodb_connection
                     //     .peek_changes("cdctest", 10, 10000)

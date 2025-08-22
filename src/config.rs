@@ -60,6 +60,8 @@ pub struct MongoDBConfig {
     pub resume_token_path: String,
     #[serde(default = "ResumeTokenStorageType::default")]
     pub resume_token_storage: ResumeTokenStorageType,
+    #[serde(default = "default::mongodb::copy_batch_size")]
+    pub copy_batch_size: u32,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -115,6 +117,11 @@ pub mod default {
         pub const RESUME_TOKEN_FILE_PATH: &str = "resume_token.json";
         pub fn resume_token_file_path() -> String {
             RESUME_TOKEN_FILE_PATH.to_string()
+        }
+
+        pub const COPY_BATCH_SIZE: u32 = 1000;
+        pub fn copy_batch_size() -> u32 {
+            COPY_BATCH_SIZE
         }
     }
 
