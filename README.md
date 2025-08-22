@@ -44,7 +44,7 @@ sudo docker run -v $(pwd)/clockpipe-config.json:/app/config.json --network host 
 
 ## How to Run
 
-- Prepare config file. ([See documentation](./docs/CONFIG.md))
+- Prepare config file. ([See documentation](./docs/README.md))
 - Enter the information about the source table you want to synchronize. (postgres example)
 
 ```json

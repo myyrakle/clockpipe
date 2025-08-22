@@ -55,6 +55,8 @@ config example
 | :-------------------------------- | :----------------------------------------------------------------- | :------- | :------ |
 | source                            | Defines which source to retrieve data from.                        | true     |         |
 | source.source_type                | Type of data source (DB type)                                      | true     |         |
+| source.postgres                   | See [The PostgreSQL Document](./postgres/README.md)                | -        |         |
+| source.mongodb                    | See [The MongoDB Document](./mongodb/README.md)                    | -        |         |
 | target                            | Where to store your data (by default clickhouse)                   | true     |         |
 | target.target_type                | clickhouse                                                         | true     |         |
 | sleep_millis_when_peek_failed     | Wait time when fetching CDC data fails. (ms)                       | false    | 5000    |
