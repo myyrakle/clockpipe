@@ -116,8 +116,7 @@ impl MongoDBConnection {
             errors::Errors::PeekChangesFailed("No resume token available".to_string())
         })?;
 
-        let mut changes = Vec::new();
-        changes.reserve(limit as usize);
+        let mut changes = Vec::with_capacity(limit as usize);
 
         let (timeout_sender, mut timeout_receiver) = oneshot::channel();
 
@@ -198,10 +197,10 @@ impl MongoDBConnection {
                     return Ok(None);
                 }
 
-                let json = std::fs::read_to_string(path).or_else(|e| {
-                    Err(errors::Errors::DatabaseConnectionError(format!(
+                let json = std::fs::read_to_string(path).map_err(|e| {
+                    errors::Errors::DatabaseConnectionError(format!(
                         "Failed to read resume token file: {e}"
-                    )))
+                    ))
                 })?;
 
                 let token: ResumeToken = serde_json::from_str(&json).map_err(|e| {
