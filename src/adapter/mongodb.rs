@@ -15,6 +15,7 @@ use crate::{config::MongoDBConfig, errors};
 pub struct MongoDBConnection {
     client: Client,
     resume_token_storage: ResumeTokenStorage,
+    copy_batch_size: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -57,6 +58,7 @@ impl MongoDBConnection {
         Ok(Self {
             client,
             resume_token_storage,
+            copy_batch_size: config.copy_batch_size,
         })
     }
 
@@ -83,13 +85,12 @@ impl MongoDBConnection {
         &self,
         database_name: &str,
         collection_name: &str,
-        batch_size: u32,
     ) -> errors::Result<Vec<Document>> {
         let database = self.client.database(database_name);
         let collection = database.collection::<Document>(collection_name);
 
         let find_options = FindOptions::builder()
-            .batch_size(batch_size) // 한 번에 가져올 문서 수
+            .batch_size(self.copy_batch_size) // 한 번에 가져올 문서 수
             .cursor_type(CursorType::NonTailable)
             .build();
 
