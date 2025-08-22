@@ -1,11 +1,11 @@
 use std::{path::PathBuf, time::Duration};
 
-use futures::StreamExt;
+use futures::{StreamExt, TryStreamExt};
 use mongodb::{
     Client,
     bson::{Document, doc},
     change_stream::event::{OperationType, ResumeToken},
-    options::{ServerApi, ServerApiVersion},
+    options::{CursorType, FindOptions, ServerApi, ServerApiVersion},
 };
 use tokio::sync::oneshot;
 
@@ -73,6 +73,43 @@ impl MongoDBConnection {
                 "Failed to ping MongoDB database: {e}"
             ))),
         }
+    }
+
+    // Copies data from a MongoDB collection to a vector of documents.
+    // The `batch_size` parameter specifies how many documents to fetch at once.
+    // Returns a vector of documents.
+    // If the collection does not exist, it returns an empty vector.
+    pub async fn copy_collection(
+        &self,
+        database_name: &str,
+        collection_name: &str,
+        batch_size: u32,
+    ) -> errors::Result<Vec<Document>> {
+        let database = self.client.database(database_name);
+        let collection = database.collection::<Document>(collection_name);
+
+        let find_options = FindOptions::builder()
+            .batch_size(batch_size) // 한 번에 가져올 문서 수
+            .cursor_type(CursorType::NonTailable)
+            .build();
+
+        let mut cursor = collection
+            .find(doc! {})
+            .with_options(find_options)
+            .await
+            .map_err(|e| {
+                errors::Errors::DatabaseConnectionError(format!("Failed to create cursor: {e}"))
+            })?;
+
+        let mut documents = Vec::new();
+
+        while let Some(doc) = cursor.try_next().await.map_err(|e| {
+            errors::Errors::DatabaseConnectionError(format!("Failed to fetch document: {e}"))
+        })? {
+            documents.push(doc);
+        }
+
+        Ok(documents)
     }
 
     // Peeks changes in the MongoDB database.
