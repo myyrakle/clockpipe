@@ -75,6 +75,12 @@ impl MongoDBConnection {
         }
     }
 
+    // Peeks changes in the MongoDB database.
+    // Returns a vector of changes and a resume token.
+    // The resume token can be used to continue watching changes from the last point.
+    // The `limit` parameter specifies the maximum number of changes to return.
+    // The `timeout_ms` parameter specifies the maximum time to wait for changes.
+    // If no changes are available within the timeout, an empty vector is returned.
     pub async fn peek_changes(
         &self,
         database_name: &str,
@@ -84,7 +90,6 @@ impl MongoDBConnection {
         let database = self.client.database(database_name);
 
         let mut watch = database.watch();
-        watch = watch.batch_size(5).max_await_time(Duration::from_secs(10));
 
         let mut resume_token = if let Some(resume_token) = self.load_resume_token()? {
             log::debug!("Resume token found, resuming from it");
@@ -98,13 +103,18 @@ impl MongoDBConnection {
             watch = watch.start_after(token.clone());
         }
 
-        let mut watch = watch.await.expect("Failed to create change stream");
+        let mut watch = watch.await.map_err(|e| {
+            errors::Errors::PeekChangesFailed(format!("Failed to start watching changes: {e}"))
+        })?;
 
+        // If no resume token is available, we will try to get it from the watch.
         if resume_token.is_none() {
             resume_token = watch.resume_token();
         }
 
-        let mut resume_token = resume_token.expect("Failed to get initial resume token");
+        let mut resume_token = resume_token.ok_or_else(|| {
+            errors::Errors::PeekChangesFailed("No resume token available".to_string())
+        })?;
 
         let mut changes = Vec::new();
         changes.reserve(limit as usize);
@@ -124,18 +134,18 @@ impl MongoDBConnection {
                 }
                 Some(event) = watch.next() => {
                     let event = event.map_err(|e| {
-                        errors::Errors::PeekWalChangesFailed(format!("Failed to get next event: {e}"))
+                        errors::Errors::PeekChangesFailed(format!("Failed to get next event: {e}"))
                     })?;
 
-                    println!("Watching changes in the database...");
+                    // println!("Watching changes in the database...");
 
                     let operation_type = event.operation_type;
                     let document_key = event.document_key;
                     let full_document = event.full_document;
 
-                    println!("Operation Type: {:?}", operation_type);
-                    println!("Document Key: {:?}", document_key);
-                    println!("Full Document: {:?}", full_document);
+                    // println!("Operation Type: {:?}", operation_type);
+                    // println!("Document Key: {:?}", document_key);
+                    // println!("Full Document: {:?}", full_document);
 
                     changes.push(PeekMongoChange {
                         operation_type,
@@ -143,7 +153,9 @@ impl MongoDBConnection {
                         full_document,
                     });
 
-                    resume_token = watch.resume_token().expect("Failed to get resume token");
+                    resume_token = watch.resume_token().ok_or_else(|| {
+                        errors::Errors::PeekChangesFailed("Failed to get resume token".to_string())
+                    })?;
 
                     if changes.len() as i64 >= limit {
                         break;

@@ -14,7 +14,7 @@ pub enum Errors {
     PublicationFindFailed(String),
     ReplicationCreateFailed(String),
     ReplicationNotFound(String),
-    PeekWalChangesFailed(String),
+    PeekChangesFailed(String),
     ReplicationSlotAdvanceFailed(String),
     PgOutputParseError(String),
     CopyTableFailed(String),
@@ -50,7 +50,7 @@ impl std::fmt::Display for Errors {
                 write!(f, "Failed to create replication slot: {msg}")
             }
             Errors::ReplicationNotFound(msg) => write!(f, "Replication slot not found: {msg}"),
-            Errors::PeekWalChangesFailed(msg) => write!(f, "Failed to peek WAL changes: {msg}"),
+            Errors::PeekChangesFailed(msg) => write!(f, "Failed to peek changes: {msg}"),
             Errors::ReplicationSlotAdvanceFailed(msg) => {
                 write!(f, "Failed to advance replication slot: {msg}")
             }
