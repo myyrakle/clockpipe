@@ -538,7 +538,7 @@ impl PostgresConnection {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| {
-            errors::Errors::PeekWalChangesFailed(format!("Failed to peek WAL changes: {e}"))
+            errors::Errors::PeekChangesFailed(format!("Failed to peek WAL changes: {e}"))
         })?;
 
         Ok(rows)

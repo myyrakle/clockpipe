@@ -14,10 +14,11 @@ pub enum Errors {
     PublicationFindFailed(String),
     ReplicationCreateFailed(String),
     ReplicationNotFound(String),
-    PeekWalChangesFailed(String),
+    PeekChangesFailed(String),
     ReplicationSlotAdvanceFailed(String),
     PgOutputParseError(String),
     CopyTableFailed(String),
+    ResumeTokenParseError(String),
 }
 
 pub type Result<T> = std::result::Result<T, Errors>;
@@ -49,7 +50,7 @@ impl std::fmt::Display for Errors {
                 write!(f, "Failed to create replication slot: {msg}")
             }
             Errors::ReplicationNotFound(msg) => write!(f, "Replication slot not found: {msg}"),
-            Errors::PeekWalChangesFailed(msg) => write!(f, "Failed to peek WAL changes: {msg}"),
+            Errors::PeekChangesFailed(msg) => write!(f, "Failed to peek changes: {msg}"),
             Errors::ReplicationSlotAdvanceFailed(msg) => {
                 write!(f, "Failed to advance replication slot: {msg}")
             }
@@ -59,6 +60,7 @@ impl std::fmt::Display for Errors {
             }
             Errors::ClickhouseDatabaseError(msg) => write!(f, "ClickHouse database error: {msg}"),
             Errors::CopyTableFailed(msg) => write!(f, "Failed to copy table data: {msg}"),
+            Errors::ResumeTokenParseError(msg) => write!(f, "Failed to parse resume token: {msg}"),
         }
     }
 }
