@@ -7,7 +7,9 @@
 
 - No additional setup is required.
 
-## PostgreSQL Config
+---
+
+## MongoDB Config
 
 ```json
     "source_type": "mongodb",
