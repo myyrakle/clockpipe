@@ -2,12 +2,15 @@
 
 ![](https://img.shields.io/badge/language-Rust-red) ![](https://img.shields.io/badge/version-0.4.2-brightgreen) [![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/myyrakle/clockpipe/blob/master/LICENSE)
 
-- An alternative to clickpipe for on-premise clickhouse users.
-- Based on CDC, data from the original source is written to clickhouse.
+- Data synchronization pipeline tool for on-premise clickhouse users.
+- Automatically writes data from the original source to Clickhouse. Implemented via CDC.
 
 ## Supported Source
 
-- PostgreSQL
+- PostgreSQL (ready)
+- MongoDB (in progress...)
+- MySQL (not yet)
+- CassandraDB (not yet)
 
 ## Install
 
@@ -31,39 +34,18 @@ Using Docker
 sudo docker run -v $(pwd)/clockpipe-config.json:/app/config.json --network host myyrakle/clockpipe:v0.4.2
 ```
 
-## PostgreSQL Setup
+## Setup or Requirements
 
-- Synchronization is implemented through PostgreSQL Publication.
-- modify `postgresql.conf` and restart postgresql server.
+- Each source has its own set of prerequisites and limitations.
+- Please refer to the respective documentation.
 
-```bash
-postgres=# SHOW config_file;
-                   config_file
--------------------------------------------------
- /opt/homebrew/var/postgresql@14/postgresql.conf
-```
-
-enable logical replica
-
-```bash
-sudo vim /opt/homebrew/var/postgresql@14/postgresql.conf
-```
-
-```
-wal_level=logical
-
-max_slot_wal_keep_size=-1
-max_wal_size=10240
-```
-
-```bash
-sudo systemctl restart postgresql
-```
+1. [PostgreSQL](./docs/postgres/README.md)
+2. [MongoDB](./docs/mongodb/README.md)
 
 ## How to Run
 
-- Prepare config file ([example](./example.json))
-- Enter the information about the PostgreSQL table you want to synchronize.
+- Prepare config file. ([See documentation](./docs/CONFIG.md))
+- Enter the information about the source table you want to synchronize. (postgres example)
 
 ```json
     "tables": [
@@ -98,10 +80,10 @@ clockpipe run --config-file ./clockpipe-config.json
     ]
 ```
 
+## ETC
+
 - You can also adjust the log level. You can set values such as error, warn, info, and debug to the "RUST_LOG" environment variable.
 
 ```
 RUST_LOG=debug clockpipe run --config-file ./clockpipe-config.json
 ```
-
-- Columns added from the source will also be automatically synchronized after the initial table link. (if restarted)
