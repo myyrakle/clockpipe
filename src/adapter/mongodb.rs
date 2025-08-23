@@ -1,15 +1,22 @@
 use std::{path::PathBuf, time::Duration};
 
+use base64::Engine;
 use futures::{StreamExt, TryStreamExt};
 use mongodb::{
     Client,
-    bson::{Document, doc},
+    bson::{Bson, Document, doc, spec::ElementType},
     change_stream::event::{OperationType, ResumeToken},
     options::{CursorType, FindOptions, ServerApi, ServerApiVersion},
 };
 use tokio::sync::oneshot;
 
-use crate::{config::MongoDBConfig, errors};
+use crate::{
+    adapter::{
+        IntoClickhouseColumn, IntoClickhouseRow, IntoClickhouseValue, clickhouse::ClickhouseType,
+    },
+    config::MongoDBConfig,
+    errors,
+};
 
 #[derive(Debug, Clone)]
 pub struct MongoDBConnection {
@@ -85,7 +92,7 @@ impl MongoDBConnection {
         &self,
         database_name: &str,
         collection_name: &str,
-    ) -> errors::Result<Vec<Document>> {
+    ) -> errors::Result<Vec<MongoDBCopyRow>> {
         let database = self.client.database(database_name);
         let collection = database.collection::<Document>(collection_name);
 
@@ -110,7 +117,19 @@ impl MongoDBConnection {
             documents.push(doc);
         }
 
-        Ok(documents)
+        Ok(documents
+            .into_iter()
+            .map(|doc| MongoDBCopyRow {
+                columns: doc
+                    .into_iter()
+                    .map(|(k, v)| MongoDBColumn {
+                        column_name: k,
+                        bson_value: v,
+                        nullable: false,
+                    })
+                    .collect(),
+            })
+            .collect())
     }
 
     // Peeks changes in the MongoDB database.
@@ -264,4 +283,255 @@ pub struct PeekMongoChange {
 pub struct PeekMongoChangesResult {
     pub changes: Vec<PeekMongoChange>,
     pub resume_token: ResumeToken,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MongoDBColumn {
+    pub column_name: String,
+    pub bson_value: Bson,
+    pub nullable: bool,
+}
+
+impl IntoClickhouseValue for MongoDBColumn {
+    fn to_integer(self) -> String {
+        match self.bson_value {
+            Bson::Int32(v) => v.to_string(),
+            Bson::Int64(v) => v.to_string(),
+            Bson::Decimal128(v) => v.to_string(),
+            _ => "0".to_string(),
+        }
+    }
+
+    fn to_real(self) -> String {
+        match self.bson_value {
+            Bson::Double(v) => v.to_string(),
+            Bson::Decimal128(v) => v.to_string(),
+            _ => "0.0".to_string(),
+        }
+    }
+
+    fn to_bool(self) -> String {
+        self.bson_value
+            .as_bool()
+            .map_or("false".to_string(), |v| v.to_string())
+    }
+
+    fn to_string(self) -> String {
+        match self.bson_value {
+            Bson::ObjectId(oid) => format!("'{}'", oid.to_hex()),
+            Bson::DateTime(dt) => format!(
+                "'{}'",
+                chrono::DateTime::<chrono::Utc>::from_timestamp_millis(dt.timestamp_millis())
+                    .unwrap_or_default()
+                    .format("%Y-%m-%d %H:%M:%S")
+            ),
+            Bson::Timestamp(ts) => format!(
+                "'{}'",
+                chrono::DateTime::from_timestamp(ts.time as i64, 0)
+                    .unwrap_or_else(|| chrono::DateTime::from_timestamp(0, 0).unwrap())
+                    .format("%Y-%m-%d %H:%M:%S")
+            ),
+            Bson::Binary(bin) => {
+                format!(
+                    "'{}'",
+                    base64::engine::general_purpose::STANDARD.encode(bin.bytes)
+                )
+            }
+            _ => self
+                .bson_value
+                .as_str()
+                .map(|s| format!("'{}'", Self::escape_string(s)))
+                .unwrap_or_else(|| "' '".to_string()),
+        }
+    }
+
+    fn to_date(self) -> String {
+        format!(
+            "toDate({})",
+            self.bson_value.as_datetime().map_or("0".to_string(), |dt| {
+                let utc = dt.timestamp_millis() / 1000;
+
+                utc.to_string()
+            })
+        )
+    }
+
+    fn to_datetime(self) -> String {
+        format!(
+            "toDateTime({})",
+            self.bson_value.as_datetime().map_or("0".to_string(), |dt| {
+                let utc = dt.timestamp_millis() / 1000;
+
+                utc.to_string()
+            })
+        )
+    }
+
+    fn to_time(self) -> String {
+        format!(
+            "toTime('{}')",
+            self.bson_value
+                .as_timestamp()
+                .map_or("1970-01-01 00:00:00".to_string(), |ts| {
+                    let datetime = chrono::DateTime::from_timestamp(ts.time as i64, 0)
+                        .unwrap_or_else(|| chrono::DateTime::from_timestamp(0, 0).unwrap());
+                    datetime.format("%Y-%m-%d %H:%M:%S").to_string()
+                })
+        )
+    }
+
+    fn to_array(self) -> String {
+        if let Some(array) = self.bson_value.as_array() {
+            match array.first().map(|v| v.element_type()) {
+                Some(ElementType::Int32) | Some(ElementType::Int64) => {
+                    let array_values = array
+                        .iter()
+                        .map(|v| v.as_i64().map_or("0".to_string(), |i| i.to_string()))
+                        .collect::<Vec<String>>();
+
+                    return format!("[{}]", array_values.join(", "));
+                }
+                Some(ElementType::Double) => {
+                    let array_values = array
+                        .iter()
+                        .map(|v| v.as_f64().map_or("0.0".to_string(), |f| f.to_string()))
+                        .collect::<Vec<String>>();
+
+                    return format!("[{}]", array_values.join(", "));
+                }
+                Some(ElementType::String) => {
+                    let array_values = array
+                        .iter()
+                        .map(|v| {
+                            v.as_str()
+                                .map(|s| format!("'{}'", Self::escape_string(s)))
+                                .unwrap_or_else(|| "' '".to_string())
+                        })
+                        .collect::<Vec<String>>();
+
+                    return format!("[{}]", array_values.join(", "));
+                }
+                _ => {}
+            }
+        }
+
+        "[]".to_string()
+    }
+
+    fn to_string_array(self) -> String {
+        if let Some(array) = self.bson_value.as_array() {
+            let array_values = array
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| format!("'{}'", Self::escape_string(s))))
+                .collect::<Vec<String>>();
+
+            return format!("[{}]", array_values.join(", "));
+        }
+
+        "[]".to_string()
+    }
+
+    fn is_null(&self) -> bool {
+        matches!(
+            self,
+            Self {
+                bson_value: Bson::Null,
+                ..
+            }
+        )
+    }
+
+    fn unknown_value(self) -> String {
+        "NULL".to_string()
+    }
+
+    fn into_null(self) -> Self {
+        Self {
+            bson_value: Bson::Null,
+            ..self
+        }
+    }
+}
+
+impl MongoDBColumn {
+    pub fn escape_string(input: &str) -> String {
+        input.replace('\'', "''").replace("\\", "\\\\")
+    }
+}
+
+impl IntoClickhouseColumn for MongoDBColumn {
+    fn to_clickhouse_type(&self) -> ClickhouseType {
+        match self.bson_value {
+            Bson::String(_) => ClickhouseType::nullable(ClickhouseType::String),
+            Bson::Array(_) => {
+                ClickhouseType::nullable(ClickhouseType::Array(Box::new(ClickhouseType::Unknown)))
+            }
+            Bson::Document(_) => ClickhouseType::nullable(ClickhouseType::String),
+            Bson::Boolean(_) => ClickhouseType::nullable(ClickhouseType::Bool),
+            Bson::Null => ClickhouseType::nullable(ClickhouseType::Unknown),
+            Bson::Int32(_) => ClickhouseType::nullable(ClickhouseType::Int32),
+            Bson::Int64(_) => ClickhouseType::nullable(ClickhouseType::Int64),
+            Bson::Double(_) => ClickhouseType::nullable(ClickhouseType::Float64),
+            Bson::Decimal128(_) => ClickhouseType::nullable(ClickhouseType::Decimal),
+            Bson::DateTime(_) => {
+                ClickhouseType::nullable(ClickhouseType::DateTime(Default::default()))
+            }
+            Bson::Timestamp(_) => {
+                ClickhouseType::nullable(ClickhouseType::DateTime(Default::default()))
+            }
+            Bson::Binary(_) => ClickhouseType::nullable(ClickhouseType::String),
+            Bson::ObjectId(_) => {
+                if self.column_name == "_id" {
+                    ClickhouseType::String
+                } else {
+                    ClickhouseType::nullable(ClickhouseType::String)
+                }
+            }
+            Bson::RegularExpression(_) => ClickhouseType::nullable(ClickhouseType::String),
+            Bson::JavaScriptCode(_) => ClickhouseType::nullable(ClickhouseType::String),
+            Bson::JavaScriptCodeWithScope(_) => ClickhouseType::nullable(ClickhouseType::String),
+            Bson::Symbol(_) => ClickhouseType::nullable(ClickhouseType::String),
+            Bson::Undefined => ClickhouseType::nullable(ClickhouseType::Unknown),
+            Bson::MaxKey => ClickhouseType::nullable(ClickhouseType::String),
+            Bson::MinKey => ClickhouseType::nullable(ClickhouseType::String),
+            Bson::DbPointer(_) => ClickhouseType::nullable(ClickhouseType::String),
+        }
+    }
+
+    fn get_column_name(&self) -> &str {
+        &self.column_name
+    }
+
+    fn get_column_index(&self) -> usize {
+        0_usize
+    }
+
+    fn get_comment(&self) -> &str {
+        ""
+    }
+
+    fn is_in_primary_key(&self) -> bool {
+        self.column_name == "_id"
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MongoDBCopyRow {
+    pub columns: Vec<MongoDBColumn>,
+}
+
+impl IntoClickhouseRow for MongoDBCopyRow {
+    fn find_value_by_column_name(
+        &self,
+        _: &[impl IntoClickhouseColumn],
+        column_name: &str,
+    ) -> Option<impl IntoClickhouseValue + Default> {
+        for column in &self.columns {
+            if column.column_name == column_name {
+                return Some(column.clone());
+            }
+        }
+
+        None
+    }
 }

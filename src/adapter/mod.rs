@@ -134,14 +134,7 @@ pub trait IntoClickhouse {
         let mut column_names = vec![];
 
         for clickhouse_column in clickhouse_columns {
-            let Some(postgres_column) = source_columns
-                .iter()
-                .find(|col| col.get_column_name() == clickhouse_column.column_name)
-            else {
-                continue;
-            };
-
-            columns.push((clickhouse_column, postgres_column));
+            columns.push(clickhouse_column);
             column_names.push(clickhouse_column.column_name.as_str());
         }
 
@@ -153,7 +146,7 @@ pub trait IntoClickhouse {
         for row in rows {
             let mut value = vec![];
 
-            for (clickhouse_column, _) in columns.iter() {
+            for clickhouse_column in columns.iter() {
                 let raw_value =
                     row.find_value_by_column_name(source_columns, &clickhouse_column.column_name);
 

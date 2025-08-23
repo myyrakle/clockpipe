@@ -7,6 +7,12 @@
 
 - No additional setup is required.
 
+## Columne Type Rules
+
+1. Since MongoDB does not have an analyzable schema, Clickhouse Columns are adjusted in real time based on actual values. (append only)
+2. If your schema management in MongoDB is not consistent, things may not work as expected.
+   - For example, if the field "name" is a String in the first row and then becomes an Integer, it will be fixed to a String value only. The Integer value will be ignored.
+
 ---
 
 ## MongoDB Config

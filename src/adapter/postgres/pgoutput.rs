@@ -181,16 +181,16 @@ impl PgOutputValue {
         }
     }
 
-    pub fn escape_string(input: &str) -> String {
-        input.replace('\'', "''").replace("\\", "\\\\")
-    }
-
     pub fn parse_string_array(value: &str) -> Vec<String> {
         let value = value.trim_matches(|c| c == '{' || c == '}');
 
         let trimmed = value.trim_matches('"');
         let items: Vec<String> = trimmed.split("\",\"").map(|s| s.to_string()).collect();
         items
+    }
+
+    pub fn escape_string(input: &str) -> String {
+        input.replace('\'', "''").replace("\\", "\\\\")
     }
 
     /*
