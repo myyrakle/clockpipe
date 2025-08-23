@@ -3,13 +3,17 @@ use std::{path::PathBuf, time::Duration};
 use futures::{StreamExt, TryStreamExt};
 use mongodb::{
     Client,
-    bson::{Document, doc},
+    bson::{Bson, Document, doc},
     change_stream::event::{OperationType, ResumeToken},
     options::{CursorType, FindOptions, ServerApi, ServerApiVersion},
 };
 use tokio::sync::oneshot;
 
-use crate::{config::MongoDBConfig, errors};
+use crate::{
+    adapter::{IntoClickhouseColumn, clickhouse::ClickhouseType},
+    config::MongoDBConfig,
+    errors,
+};
 
 #[derive(Debug, Clone)]
 pub struct MongoDBConnection {
@@ -264,4 +268,68 @@ pub struct PeekMongoChange {
 pub struct PeekMongoChangesResult {
     pub changes: Vec<PeekMongoChange>,
     pub resume_token: ResumeToken,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct MongoDBColumn {
+    pub column_index: i32,
+    pub column_name: String,
+    pub bson_value: Bson,
+    pub nullable: bool,
+}
+
+impl IntoClickhouseColumn for MongoDBColumn {
+    fn to_clickhouse_type(&self) -> ClickhouseType {
+        match self.bson_value {
+            Bson::String(_) => ClickhouseType::nullable(ClickhouseType::String),
+            Bson::Array(_) => {
+                ClickhouseType::nullable(ClickhouseType::Array(Box::new(ClickhouseType::Unknown)))
+            }
+            Bson::Document(_) => ClickhouseType::nullable(ClickhouseType::String),
+            Bson::Boolean(_) => ClickhouseType::nullable(ClickhouseType::Bool),
+            Bson::Null => ClickhouseType::nullable(ClickhouseType::Unknown),
+            Bson::Int32(_) => ClickhouseType::nullable(ClickhouseType::Int32),
+            Bson::Int64(_) => ClickhouseType::nullable(ClickhouseType::Int64),
+            Bson::Double(_) => ClickhouseType::nullable(ClickhouseType::Float64),
+            Bson::Decimal128(_) => ClickhouseType::nullable(ClickhouseType::Decimal),
+            Bson::DateTime(_) => {
+                ClickhouseType::nullable(ClickhouseType::DateTime(Default::default()))
+            }
+            Bson::Timestamp(_) => {
+                ClickhouseType::nullable(ClickhouseType::DateTime(Default::default()))
+            }
+            Bson::Binary(_) => ClickhouseType::nullable(ClickhouseType::String),
+            Bson::ObjectId(_) => {
+                if self.column_name == "_id" {
+                    ClickhouseType::String
+                } else {
+                    ClickhouseType::nullable(ClickhouseType::String)
+                }
+            }
+            Bson::RegularExpression(_) => ClickhouseType::nullable(ClickhouseType::String),
+            Bson::JavaScriptCode(_) => ClickhouseType::nullable(ClickhouseType::String),
+            Bson::JavaScriptCodeWithScope(_) => ClickhouseType::nullable(ClickhouseType::String),
+            Bson::Symbol(_) => ClickhouseType::nullable(ClickhouseType::String),
+            Bson::Undefined => ClickhouseType::nullable(ClickhouseType::Unknown),
+            Bson::MaxKey => ClickhouseType::nullable(ClickhouseType::String),
+            Bson::MinKey => ClickhouseType::nullable(ClickhouseType::String),
+            Bson::DbPointer(_) => ClickhouseType::nullable(ClickhouseType::String),
+        }
+    }
+
+    fn get_column_name(&self) -> &str {
+        &self.column_name
+    }
+
+    fn get_column_index(&self) -> usize {
+        self.column_index as usize
+    }
+
+    fn get_comment(&self) -> &str {
+        ""
+    }
+
+    fn is_in_primary_key(&self) -> bool {
+        self.column_name == "_id"
+    }
 }

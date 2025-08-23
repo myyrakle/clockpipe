@@ -45,6 +45,7 @@ pub enum ClickhouseType {
     UUID,
     Array(Box<ClickhouseType>),
     Nullable(Box<ClickhouseType>),
+    Unknown,
 }
 
 impl ClickhouseType {
@@ -87,6 +88,7 @@ impl ClickhouseType {
             ClickhouseType::Nullable(inner_type) => {
                 format!("Nullable({})", inner_type.to_type_text())
             }
+            ClickhouseType::Unknown => "Unknown".to_string(),
         }
     }
 }

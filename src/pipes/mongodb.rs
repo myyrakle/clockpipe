@@ -1,3 +1,5 @@
+use std::any::Any;
+
 use crate::{
     adapter::{self, IntoClickhouse, clickhouse::ClickhouseColumn},
     config::Configuraion,
@@ -71,7 +73,11 @@ impl IPipe for MongoDBPipe {
     }
 
     async fn initialize(&mut self) {
-        // Since MongoDB is a schemaless DB, static setup is not possible.
+        log::info!("Initializing MongoDB Pipe...");
+
+        // self.setup_table()
+        //     .await
+        //     .expect("Failed to setup ClickHouse table");
     }
 
     async fn first_sync(&self) {
@@ -87,27 +93,61 @@ impl IPipe for MongoDBPipe {
                 continue;
             }
 
-            if self
-                .clickhouse_connection
-                .table_is_not_empty(
-                    &self.clickhouse_config.connection.database,
+            // if self
+            //     .clickhouse_connection
+            //     .table_is_not_empty(
+            //         &self.clickhouse_config.connection.database,
+            //         &collection.collection_name,
+            //     )
+            //     .await
+            //     .expect("Failed to check if table exists")
+            // {
+            //     log::debug!(
+            //         "Collection {collection_name} already exists in ClickHouse, skipping initial sync.",
+            //     );
+            //     continue;
+            // }
+
+            log::info!("Copying data from MongoDB collection {collection_name}...",);
+
+            let rows = self
+                .mongodb_connection
+                .copy_collection(
+                    &self.mongodb_config.connection.database,
                     &collection.collection_name,
                 )
                 .await
-                .expect("Failed to check if table exists")
-            {
-                log::debug!(
-                    "Collection {collection_name} already exists in ClickHouse, skipping initial sync.",
-                );
-                continue;
-            }
+                .expect("Failed to copy collection data from MongoDB");
 
-            log::info!("Copying data from MongoDB table {collection_name}...",);
-            // let rows = self
-            //     .mongodb_connection
-            //     .copy_table_to_stdout(&collection.schema_name, &collection.table_name)
-            //     .await
-            //     .expect("Failed to copy table data from MongoDB");
+            println!(
+                "Total rows copied from collection {collection_name}: {}",
+                rows.len()
+            );
+
+            for row in &rows {
+                log::info!("Sample row: {:?}", row);
+
+                for (key, value) in row {
+                    log::info!("  {}: {:?}", key, value);
+
+                    match value {
+                        mongodb::bson::Bson::Double(_) => log::info!("    Type: Double"),
+                        mongodb::bson::Bson::String(_) => log::info!("    Type: String"),
+                        mongodb::bson::Bson::Array(_) => log::info!("    Type: Array"),
+                        mongodb::bson::Bson::Document(_) => log::info!("    Type: Document"),
+                        mongodb::bson::Bson::Boolean(_) => log::info!("    Type: Boolean"),
+                        mongodb::bson::Bson::Null => log::info!("    Type: Null"),
+                        mongodb::bson::Bson::Int32(_) => log::info!("    Type: Int32"),
+                        mongodb::bson::Bson::Int64(_) => log::info!("    Type: Int64"),
+                        mongodb::bson::Bson::DateTime(_) => log::info!("    Type: DateTime"),
+                        mongodb::bson::Bson::Binary(_) => log::info!("    Type: Binary"),
+                        mongodb::bson::Bson::ObjectId(_) => log::info!("    Type: ObjectId"),
+                        _ => log::info!("    Type: Other"),
+                    }
+                }
+
+                break;
+            }
 
             // log::info!("Inserting copied data into ClickHouse table {schema_name}.{table_name}...",);
 
@@ -402,7 +442,48 @@ impl IPipe for MongoDBPipe {
     }
 }
 
-impl MongoDBPipe {}
+impl MongoDBPipe {
+    async fn setup_table(&mut self) -> Result<(), Errors> {
+        log::info!("Setting up tables in ClickHouse...");
+
+        for collection in &self.mongodb_config.collections {
+            let clickhouse_table_not_exists = self
+                .clickhouse_connection
+                .list_columns_by_tablename(
+                    &self.clickhouse_config.connection.database,
+                    &collection.collection_name,
+                )
+                .await?
+                .is_empty();
+
+            if clickhouse_table_not_exists {
+                log::info!(
+                    "Table {}.{} does not exist in ClickHouse, creating it",
+                    &self.clickhouse_config.connection.database,
+                    collection.collection_name
+                );
+
+                // let create_table_query = self.generate_create_table_query(
+                //     &self.clickhouse_config.connection.database,
+                //     &collection.collection_name,
+                //     &,
+                // );
+
+                // self.clickhouse_connection
+                //     .execute_query(&create_table_query)
+                //     .await?;
+
+                // log::info!(
+                //     "Table {}.{} created in ClickHouse",
+                //     &self.clickhouse_config.connection.database,
+                //     collection.collection_name,
+                // );
+            }
+        }
+
+        Ok(())
+    }
+}
 
 impl IntoClickhouse for MongoDBPipe {}
 
