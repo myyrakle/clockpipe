@@ -3,14 +3,16 @@ use std::{path::PathBuf, time::Duration};
 use futures::{StreamExt, TryStreamExt};
 use mongodb::{
     Client,
-    bson::{Bson, Document, doc},
+    bson::{Bson, Document, doc, spec::ElementType},
     change_stream::event::{OperationType, ResumeToken},
     options::{CursorType, FindOptions, ServerApi, ServerApiVersion},
 };
 use tokio::sync::oneshot;
 
 use crate::{
-    adapter::{IntoClickhouseColumn, clickhouse::ClickhouseType},
+    adapter::{
+        IntoClickhouseColumn, IntoClickhouseRow, IntoClickhouseValue, clickhouse::ClickhouseType,
+    },
     config::MongoDBConfig,
     errors,
 };
@@ -89,7 +91,7 @@ impl MongoDBConnection {
         &self,
         database_name: &str,
         collection_name: &str,
-    ) -> errors::Result<Vec<Document>> {
+    ) -> errors::Result<Vec<MongoDBCopyRow>> {
         let database = self.client.database(database_name);
         let collection = database.collection::<Document>(collection_name);
 
@@ -114,7 +116,19 @@ impl MongoDBConnection {
             documents.push(doc);
         }
 
-        Ok(documents)
+        Ok(documents
+            .into_iter()
+            .map(|doc| MongoDBCopyRow {
+                columns: doc
+                    .into_iter()
+                    .map(|(k, v)| MongoDBColumn {
+                        column_name: k,
+                        bson_value: v,
+                        nullable: false,
+                    })
+                    .collect(),
+            })
+            .collect())
     }
 
     // Peeks changes in the MongoDB database.
@@ -272,10 +286,150 @@ pub struct PeekMongoChangesResult {
 
 #[derive(Debug, Clone, Default)]
 pub struct MongoDBColumn {
-    pub column_index: i32,
     pub column_name: String,
     pub bson_value: Bson,
     pub nullable: bool,
+}
+
+impl IntoClickhouseValue for MongoDBColumn {
+    fn to_integer(self) -> String {
+        self.bson_value
+            .as_i64()
+            .map_or("0".to_string(), |v| v.to_string())
+    }
+
+    fn to_real(self) -> String {
+        self.bson_value
+            .as_f64()
+            .map_or("0.0".to_string(), |v| v.to_string())
+    }
+
+    fn to_bool(self) -> String {
+        self.bson_value
+            .as_bool()
+            .map_or("false".to_string(), |v| v.to_string())
+    }
+
+    fn to_string(self) -> String {
+        format!(
+            "'{}'",
+            Self::escape_string(&self.bson_value.as_str().unwrap_or_default())
+        )
+    }
+
+    fn to_date(self) -> String {
+        format!(
+            "toDate({})",
+            self.bson_value.as_datetime().map_or("0".to_string(), |dt| {
+                let utc = dt.timestamp_millis() / 1000;
+
+                utc.to_string()
+            })
+        )
+    }
+
+    fn to_datetime(self) -> String {
+        format!(
+            "toDateTime({})",
+            self.bson_value.as_datetime().map_or("0".to_string(), |dt| {
+                let utc = dt.timestamp_millis() / 1000;
+
+                utc.to_string()
+            })
+        )
+    }
+
+    fn to_time(self) -> String {
+        format!(
+            "toTime('{}')",
+            self.bson_value
+                .as_timestamp()
+                .map_or("1970-01-01 00:00:00".to_string(), |ts| {
+                    let datetime = chrono::DateTime::from_timestamp(ts.time as i64, 0)
+                        .unwrap_or_else(|| chrono::DateTime::from_timestamp(0, 0).unwrap());
+                    datetime.format("%Y-%m-%d %H:%M:%S").to_string()
+                })
+        )
+    }
+
+    fn to_array(self) -> String {
+        if let Some(array) = self.bson_value.as_array() {
+            match array.first().map(|v| v.element_type()) {
+                Some(ElementType::Int32) | Some(ElementType::Int64) => {
+                    let array_values = array
+                        .iter()
+                        .map(|v| v.as_i64().map_or("0".to_string(), |i| i.to_string()))
+                        .collect::<Vec<String>>();
+
+                    return format!("[{}]", array_values.join(", "));
+                }
+                Some(ElementType::Double) => {
+                    let array_values = array
+                        .iter()
+                        .map(|v| v.as_f64().map_or("0.0".to_string(), |f| f.to_string()))
+                        .collect::<Vec<String>>();
+
+                    return format!("[{}]", array_values.join(", "));
+                }
+                Some(ElementType::String) => {
+                    let array_values = array
+                        .iter()
+                        .map(|v| {
+                            v.as_str()
+                                .map(|s| format!("'{}'", Self::escape_string(s)))
+                                .unwrap_or_else(|| "' '".to_string())
+                        })
+                        .collect::<Vec<String>>();
+
+                    return format!("[{}]", array_values.join(", "));
+                }
+                _ => {}
+            }
+        }
+
+        "[]".to_string()
+    }
+
+    fn to_string_array(self) -> String {
+        if let Some(array) = self.bson_value.as_array() {
+            let array_values = array
+                .iter()
+                .map(|v| v.as_str().map(|s| format!("'{}'", Self::escape_string(s))))
+                .flatten()
+                .collect::<Vec<String>>();
+
+            return format!("[{}]", array_values.join(", "));
+        }
+
+        "[]".to_string()
+    }
+
+    fn is_null(&self) -> bool {
+        matches!(
+            self,
+            Self {
+                bson_value: Bson::Null,
+                ..
+            }
+        )
+    }
+
+    fn unknown_value(self) -> String {
+        "NULL".to_string()
+    }
+
+    fn into_null(self) -> Self {
+        Self {
+            bson_value: Bson::Null,
+            ..self
+        }
+    }
+}
+
+impl MongoDBColumn {
+    pub fn escape_string(input: &str) -> String {
+        input.replace('\'', "''").replace("\\", "\\\\")
+    }
 }
 
 impl IntoClickhouseColumn for MongoDBColumn {
@@ -322,7 +476,7 @@ impl IntoClickhouseColumn for MongoDBColumn {
     }
 
     fn get_column_index(&self) -> usize {
-        self.column_index as usize
+        0 as usize
     }
 
     fn get_comment(&self) -> &str {
@@ -331,5 +485,26 @@ impl IntoClickhouseColumn for MongoDBColumn {
 
     fn is_in_primary_key(&self) -> bool {
         self.column_name == "_id"
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MongoDBCopyRow {
+    pub columns: Vec<MongoDBColumn>,
+}
+
+impl IntoClickhouseRow for MongoDBCopyRow {
+    fn find_value_by_column_name(
+        &self,
+        _: &[impl IntoClickhouseColumn],
+        column_name: &str,
+    ) -> Option<impl IntoClickhouseValue + Default> {
+        for column in &self.columns {
+            if column.column_name == column_name {
+                return Some(column.clone());
+            }
+        }
+
+        None
     }
 }

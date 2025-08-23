@@ -85,7 +85,7 @@ pub struct MongoDBSource {
     #[serde(default)]
     pub skip_copy: bool,
     #[serde(default)]
-    pub mask_fields: Vec<String>,
+    pub mask_columns: Vec<String>,
 }
 
 pub mod default {

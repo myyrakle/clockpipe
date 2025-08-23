@@ -1,16 +1,26 @@
-use std::any::Any;
-
 use crate::{
-    adapter::{self, IntoClickhouse, clickhouse::ClickhouseColumn, mongodb::MongoDBColumn},
+    adapter::{
+        self, IntoClickhouse,
+        clickhouse::ClickhouseColumn,
+        mongodb::{MongoDBColumn, MongoDBCopyRow},
+    },
     config::Configuraion,
     errors::Errors,
     pipes::IPipe,
 };
 
 #[derive(Debug, Clone, Default)]
-pub struct MongoDBPipeContext {}
+pub struct MongoDBPipeContext {
+    pub tables_map: std::collections::HashMap<String, MongoDBPipeTableInfo>,
+}
 
-impl MongoDBPipeContext {}
+impl MongoDBPipeContext {
+    pub fn new() -> Self {
+        Self {
+            tables_map: std::collections::HashMap::new(),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct MongoDBPipeTableInfo {
@@ -21,6 +31,7 @@ pub struct MongoDBPipeTableInfo {
 pub struct MongoDBPipe {
     context: MongoDBPipeContext,
 
+    #[allow(dead_code)]
     config: Configuraion,
 
     mongodb_config: crate::config::MongoDBConfig,
@@ -93,20 +104,20 @@ impl IPipe for MongoDBPipe {
                 continue;
             }
 
-            // if self
-            //     .clickhouse_connection
-            //     .table_is_not_empty(
-            //         &self.clickhouse_config.connection.database,
-            //         &collection.collection_name,
-            //     )
-            //     .await
-            //     .expect("Failed to check if table exists")
-            // {
-            //     log::debug!(
-            //         "Collection {collection_name} already exists in ClickHouse, skipping initial sync.",
-            //     );
-            //     continue;
-            // }
+            if self
+                .clickhouse_connection
+                .table_is_not_empty(
+                    &self.clickhouse_config.connection.database,
+                    &collection.collection_name,
+                )
+                .await
+                .expect("Failed to check if table exists")
+            {
+                log::debug!(
+                    "Collection {collection_name} already exists in ClickHouse, skipping initial sync.",
+                );
+                continue;
+            }
 
             log::info!("Copying data from MongoDB collection {collection_name}...",);
 
@@ -119,73 +130,52 @@ impl IPipe for MongoDBPipe {
                 .await
                 .expect("Failed to copy collection data from MongoDB");
 
-            println!(
-                "Total rows copied from collection {collection_name}: {}",
+            log::info!(
+                "Fetched {} rows from MongoDB collection {collection_name}",
                 rows.len()
             );
 
-            for row in &rows {
-                log::info!("Sample row: {:?}", row);
+            self.add_columns_to_table_if_not_exists(&collection.collection_name, &rows)
+                .await
+                .expect("Failed to add columns to ClickHouse table if not exists");
 
-                for (key, value) in row {
-                    log::info!("  {}: {:?}", key, value);
+            log::info!("Inserting copied data into ClickHouse table {collection_name}...",);
 
-                    match value {
-                        mongodb::bson::Bson::Double(_) => log::info!("    Type: Double"),
-                        mongodb::bson::Bson::String(_) => log::info!("    Type: String"),
-                        mongodb::bson::Bson::Array(_) => log::info!("    Type: Array"),
-                        mongodb::bson::Bson::Document(_) => log::info!("    Type: Document"),
-                        mongodb::bson::Bson::Boolean(_) => log::info!("    Type: Boolean"),
-                        mongodb::bson::Bson::Null => log::info!("    Type: Null"),
-                        mongodb::bson::Bson::Int32(_) => log::info!("    Type: Int32"),
-                        mongodb::bson::Bson::Int64(_) => log::info!("    Type: Int64"),
-                        mongodb::bson::Bson::DateTime(_) => log::info!("    Type: DateTime"),
-                        mongodb::bson::Bson::Binary(_) => log::info!("    Type: Binary"),
-                        mongodb::bson::Bson::ObjectId(_) => log::info!("    Type: ObjectId"),
-                        _ => log::info!("    Type: Other"),
-                    }
+            let source_table_info = self
+                .context
+                .tables_map
+                .get(&collection.collection_name)
+                .expect("Table info not found in context");
+
+            let mask_columns = &collection.mask_columns;
+
+            let chunks = rows.chunks(100000);
+            let chunk_count = chunks.len();
+
+            for (chunk_index, chunk) in chunks.enumerate() {
+                let chunk_index = chunk_index + 1;
+                let percent = (chunk_index * 100) / chunk_count;
+
+                log::debug!(
+                    "Processing chunk {percent}% ({chunk_index}/{chunk_count}) for collection {collection_name}"
+                );
+
+                let insert_query = self.generate_insert_query(
+                    &self.clickhouse_config,
+                    &source_table_info.clickhouse_columns,
+                    &Vec::<MongoDBColumn>::new(), // MongoDB does not have a fixed schema, so we pass an empty slice here
+                    mask_columns,
+                    &collection.collection_name,
+                    chunk,
+                );
+
+                if !insert_query.is_empty() {
+                    self.clickhouse_connection
+                        .execute_query(&insert_query)
+                        .await
+                        .expect("Failed to execute insert query in ClickHouse");
                 }
-
-                break;
             }
-
-            // log::info!("Inserting copied data into ClickHouse table {schema_name}.{table_name}...",);
-
-            // let source_table_info = self
-            //     .context
-            //     .tables_map
-            //     .get(&format!("{schema_name}.{table_name}"))
-            //     .expect("Table info not found in context");
-
-            // let mask_columns = &collection.mask_columns;
-
-            // let chunks = rows.chunks(100000);
-            // let chunk_count = chunks.len();
-
-            // for (chunk_index, chunk) in chunks.enumerate() {
-            //     let chunk_index = chunk_index + 1;
-            //     let percent = (chunk_index * 100) / chunk_count;
-
-            //     log::debug!(
-            //         "Processing chunk {percent}% ({chunk_index}/{chunk_count}) for table {schema_name}.{table_name}",
-            //     );
-
-            //     let insert_query = self.generate_insert_query(
-            //         &self.clickhouse_config,
-            //         &source_table_info.clickhouse_columns,
-            //         &source_table_info.postgres_columns,
-            //         mask_columns,
-            //         &collection.table_name,
-            //         chunk,
-            //     );
-
-            //     if !insert_query.is_empty() {
-            //         self.clickhouse_connection
-            //             .execute_query(&insert_query)
-            //             .await
-            //             .expect("Failed to execute insert query in ClickHouse");
-            //     }
-            // }
 
             log::info!("Copy completed for collection {collection_name}");
         }
@@ -446,7 +436,9 @@ impl MongoDBPipe {
     async fn setup_table(&mut self) -> Result<(), Errors> {
         log::info!("Setting up tables in ClickHouse...");
 
-        for collection in &self.mongodb_config.collections {
+        let collections = self.mongodb_config.collections.clone();
+
+        for collection in &collections {
             let clickhouse_table_not_exists = self
                 .clickhouse_connection
                 .list_columns_by_tablename(
@@ -485,6 +477,71 @@ impl MongoDBPipe {
                     collection.collection_name,
                 );
             }
+
+            self.load_table_table_info(&collection.collection_name)
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    async fn load_table_table_info<'a>(&'a mut self, table_name: &str) -> Result<(), Errors> {
+        let clickhouse_columns = self
+            .clickhouse_connection
+            .list_columns_by_tablename(&self.clickhouse_config.connection.database, &table_name)
+            .await?;
+
+        self.context.tables_map.insert(
+            table_name.to_string(),
+            MongoDBPipeTableInfo { clickhouse_columns },
+        );
+
+        Ok(())
+    }
+
+    async fn add_columns_to_table_if_not_exists(
+        &self,
+        collection_name: &str,
+        rows: &[MongoDBCopyRow],
+    ) -> Result<(), Errors> {
+        let mut columns_to_add = vec![];
+        let clickhouse_columns = self
+            .context
+            .tables_map
+            .get(collection_name)
+            .expect("Table info not found in context");
+
+        for row in rows {
+            for column in &row.columns {
+                if !clickhouse_columns
+                    .clickhouse_columns
+                    .iter()
+                    .any(|c| c.column_name == column.column_name)
+                    && !columns_to_add
+                        .iter()
+                        .any(|c: &MongoDBColumn| c.column_name == column.column_name)
+                {
+                    columns_to_add.push(column.clone());
+                }
+            }
+        }
+
+        for column_to_add in columns_to_add {
+            let add_column_query = self.generate_add_column_query(
+                &self.clickhouse_config,
+                collection_name,
+                &column_to_add,
+            );
+
+            self.clickhouse_connection
+                .execute_query(&add_column_query)
+                .await?;
+
+            log::info!(
+                "Added column {} to ClickHouse table {}",
+                column_to_add.column_name,
+                collection_name
+            );
         }
 
         Ok(())
