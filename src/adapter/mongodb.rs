@@ -1,5 +1,6 @@
 use std::{path::PathBuf, time::Duration};
 
+use base64::Engine;
 use futures::{StreamExt, TryStreamExt};
 use mongodb::{
     Client,
@@ -293,15 +294,20 @@ pub struct MongoDBColumn {
 
 impl IntoClickhouseValue for MongoDBColumn {
     fn to_integer(self) -> String {
-        self.bson_value
-            .as_i64()
-            .map_or("0".to_string(), |v| v.to_string())
+        match self.bson_value {
+            Bson::Int32(v) => v.to_string(),
+            Bson::Int64(v) => v.to_string(),
+            Bson::Decimal128(v) => v.to_string(),
+            _ => "0".to_string(),
+        }
     }
 
     fn to_real(self) -> String {
-        self.bson_value
-            .as_f64()
-            .map_or("0.0".to_string(), |v| v.to_string())
+        match self.bson_value {
+            Bson::Double(v) => v.to_string(),
+            Bson::Decimal128(v) => v.to_string(),
+            _ => "0.0".to_string(),
+        }
     }
 
     fn to_bool(self) -> String {
@@ -311,10 +317,34 @@ impl IntoClickhouseValue for MongoDBColumn {
     }
 
     fn to_string(self) -> String {
-        format!(
-            "'{}'",
-            Self::escape_string(&self.bson_value.as_str().unwrap_or_default())
-        )
+        match self.bson_value {
+            Bson::ObjectId(oid) => format!("'{}'", oid.to_hex()),
+            Bson::DateTime(dt) => format!(
+                "'{}'",
+                chrono::DateTime::<chrono::Utc>::from_timestamp_millis(dt.timestamp_millis())
+                    .unwrap_or_default()
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string()
+            ),
+            Bson::Timestamp(ts) => format!(
+                "'{}'",
+                chrono::DateTime::from_timestamp(ts.time as i64, 0)
+                    .unwrap_or_else(|| chrono::DateTime::from_timestamp(0, 0).unwrap())
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string()
+            ),
+            Bson::Binary(bin) => {
+                format!(
+                    "'{}'",
+                    base64::engine::general_purpose::STANDARD.encode(bin.bytes)
+                )
+            }
+            _ => self
+                .bson_value
+                .as_str()
+                .map(|s| format!("'{}'", Self::escape_string(s)))
+                .unwrap_or_else(|| "' '".to_string()),
+        }
     }
 
     fn to_date(self) -> String {
