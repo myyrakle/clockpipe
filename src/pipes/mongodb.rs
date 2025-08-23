@@ -1,7 +1,7 @@
 use std::any::Any;
 
 use crate::{
-    adapter::{self, IntoClickhouse, clickhouse::ClickhouseColumn},
+    adapter::{self, IntoClickhouse, clickhouse::ClickhouseColumn, mongodb::MongoDBColumn},
     config::Configuraion,
     errors::Errors,
     pipes::IPipe,
@@ -75,9 +75,9 @@ impl IPipe for MongoDBPipe {
     async fn initialize(&mut self) {
         log::info!("Initializing MongoDB Pipe...");
 
-        // self.setup_table()
-        //     .await
-        //     .expect("Failed to setup ClickHouse table");
+        self.setup_table()
+            .await
+            .expect("Failed to setup ClickHouse table");
     }
 
     async fn first_sync(&self) {
@@ -463,21 +463,27 @@ impl MongoDBPipe {
                     collection.collection_name
                 );
 
-                // let create_table_query = self.generate_create_table_query(
-                //     &self.clickhouse_config.connection.database,
-                //     &collection.collection_name,
-                //     &,
-                // );
+                let create_table_query = self.generate_create_table_query(
+                    &self.clickhouse_config.connection.database,
+                    &collection.collection_name,
+                    &vec![MongoDBColumn {
+                        column_name: "_id".to_string(),
+                        bson_value: mongodb::bson::Bson::ObjectId(
+                            mongodb::bson::oid::ObjectId::new(),
+                        ),
+                        ..Default::default()
+                    }],
+                );
 
-                // self.clickhouse_connection
-                //     .execute_query(&create_table_query)
-                //     .await?;
+                self.clickhouse_connection
+                    .execute_query(&create_table_query)
+                    .await?;
 
-                // log::info!(
-                //     "Table {}.{} created in ClickHouse",
-                //     &self.clickhouse_config.connection.database,
-                //     collection.collection_name,
-                // );
+                log::info!(
+                    "Table {}.{} created in ClickHouse",
+                    &self.clickhouse_config.connection.database,
+                    collection.collection_name,
+                );
             }
         }
 

@@ -270,7 +270,7 @@ pub struct PeekMongoChangesResult {
     pub resume_token: ResumeToken,
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone, Default)]
 pub struct MongoDBColumn {
     pub column_index: i32,
     pub column_name: String,
