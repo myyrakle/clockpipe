@@ -1,6 +1,9 @@
 pub mod postgres;
 pub use postgres::*;
 
+pub mod mongodb;
+pub use mongodb::*;
+
 use crate::errors::Errors;
 
 #[async_trait::async_trait]
