@@ -324,14 +324,12 @@ impl IntoClickhouseValue for MongoDBColumn {
                 chrono::DateTime::<chrono::Utc>::from_timestamp_millis(dt.timestamp_millis())
                     .unwrap_or_default()
                     .format("%Y-%m-%d %H:%M:%S")
-                    .to_string()
             ),
             Bson::Timestamp(ts) => format!(
                 "'{}'",
                 chrono::DateTime::from_timestamp(ts.time as i64, 0)
                     .unwrap_or_else(|| chrono::DateTime::from_timestamp(0, 0).unwrap())
                     .format("%Y-%m-%d %H:%M:%S")
-                    .to_string()
             ),
             Bson::Binary(bin) => {
                 format!(
@@ -424,8 +422,7 @@ impl IntoClickhouseValue for MongoDBColumn {
         if let Some(array) = self.bson_value.as_array() {
             let array_values = array
                 .iter()
-                .map(|v| v.as_str().map(|s| format!("'{}'", Self::escape_string(s))))
-                .flatten()
+                .filter_map(|v| v.as_str().map(|s| format!("'{}'", Self::escape_string(s))))
                 .collect::<Vec<String>>();
 
             return format!("[{}]", array_values.join(", "));
@@ -506,7 +503,7 @@ impl IntoClickhouseColumn for MongoDBColumn {
     }
 
     fn get_column_index(&self) -> usize {
-        0 as usize
+        0_usize
     }
 
     fn get_comment(&self) -> &str {

@@ -458,7 +458,7 @@ impl MongoDBPipe {
                 let create_table_query = self.generate_create_table_query(
                     &self.clickhouse_config.connection.database,
                     &collection.collection_name,
-                    &vec![MongoDBColumn {
+                    &[MongoDBColumn {
                         column_name: "_id".to_string(),
                         bson_value: mongodb::bson::Bson::ObjectId(
                             mongodb::bson::oid::ObjectId::new(),
@@ -485,10 +485,10 @@ impl MongoDBPipe {
         Ok(())
     }
 
-    async fn load_table_table_info<'a>(&'a mut self, table_name: &str) -> Result<(), Errors> {
+    async fn load_table_table_info(&mut self, table_name: &str) -> Result<(), Errors> {
         let clickhouse_columns = self
             .clickhouse_connection
-            .list_columns_by_tablename(&self.clickhouse_config.connection.database, &table_name)
+            .list_columns_by_tablename(&self.clickhouse_config.connection.database, table_name)
             .await?;
 
         self.context.tables_map.insert(
