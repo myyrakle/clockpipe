@@ -5,8 +5,8 @@ use mongodb::change_stream::event::OperationType;
 
 use crate::{
     adapter::{
-        self, IntoClickhouse,
-        clickhouse::ClickhouseColumn,
+        self, IntoClickhouse, IntoClickhouseColumn,
+        clickhouse::{ClickhouseColumn, ClickhouseType},
         mongodb::{MongoDBColumn, MongoDBCopyRow},
     },
     config::Configuraion,
@@ -542,6 +542,20 @@ impl MongoDBPipe {
         }
 
         for column_to_add in columns_to_add {
+            match column_to_add.to_clickhouse_type() {
+                ClickhouseType::Unknown => {
+                    continue;
+                }
+                ClickhouseType::Nullable(inner) => {
+                    if let ClickhouseType::Unknown = *inner {
+                        continue;
+                    }
+
+                    continue;
+                }
+                _ => {}
+            }
+
             let add_column_query = self.generate_add_column_query(
                 &self.clickhouse_config,
                 collection_name,
