@@ -8,7 +8,7 @@
 ## Supported Source
 
 - PostgreSQL (ready)
-- MongoDB (in progress...)
+- MongoDB (ready)
 - MySQL (not yet)
 - CassandraDB (not yet)
 
@@ -34,7 +34,7 @@ Using Docker
 sudo docker run -v $(pwd)/clockpipe-config.json:/app/config.json --network host myyrakle/clockpipe:v0.4.2
 ```
 
-## Setup or Requirements
+## Requirements & Limits
 
 - Each source has its own set of prerequisites and limitations.
 - Please refer to the respective documentation.
