@@ -308,6 +308,8 @@ impl IPipe for MongoDBPipe {
                                 .find(|t| t.collection_name == collection_name.as_str())
                                 .map_or_else(Vec::new, |t| t.mask_columns.clone());
 
+                            println!("copy row: {:?}", copy_row);
+
                             batch_insert_queue
                                 .entry(collection_name.clone())
                                 .or_insert_with(|| BatchWriteEntry {

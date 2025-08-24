@@ -148,6 +148,8 @@ impl MongoDBConnection {
 
         let mut watch = database.watch();
 
+        watch = watch.full_document(mongodb::options::FullDocumentType::UpdateLookup);
+
         let mut resume_token = if let Some(resume_token) = self.load_resume_token()? {
             log::debug!("Resume token found, resuming from it");
             Some(resume_token)
@@ -193,9 +195,11 @@ impl MongoDBConnection {
                         errors::Errors::PeekChangesFailed(format!("Failed to get next event: {e}"))
                     })?;
 
+                    println!("Change event: {:?}", event);
                     let operation_type = event.operation_type;
                     let document_key = event.document_key;
                     let full_document = event.full_document;
+
 
                     let collection_name = event.ns.map(|ns| ns.coll).flatten().unwrap_or_default();
                     if collection_names.iter().any(|&name| name == collection_name) {
