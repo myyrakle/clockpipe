@@ -195,6 +195,7 @@ impl MongoDBConnection {
                         errors::Errors::PeekChangesFailed(format!("Failed to get next event: {e}"))
                     })?;
 
+                    log::debug!("Change event: {:?}", event);
                     let operation_type = event.operation_type;
                     let document_key = event.document_key;
                     let full_document = event.full_document;
