@@ -232,10 +232,6 @@ impl IPipe for MongoDBPipe {
             let chunk_iter = peek_result
                 .changes
                 .into_iter()
-                .filter(|change| {
-                    change.operation_type == OperationType::Insert
-                        || change.operation_type == OperationType::Update
-                })
                 .chunk_by(|change| change.collection_name.clone());
 
             let mut changes_by_collection = HashMap::new();

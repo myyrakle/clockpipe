@@ -187,7 +187,7 @@ impl MongoDBConnection {
         loop {
             tokio::select! {
                 _ = (&mut timeout_receiver) => {
-                    println!("Timeout reached");
+                    log::debug!("Timeout reached");
                     break;
                 }
                 Some(event) = watch.next() => {
@@ -195,11 +195,9 @@ impl MongoDBConnection {
                         errors::Errors::PeekChangesFailed(format!("Failed to get next event: {e}"))
                     })?;
 
-                    println!("Change event: {:?}", event);
                     let operation_type = event.operation_type;
                     let document_key = event.document_key;
                     let full_document = event.full_document;
-
 
                     let collection_name = event.ns.map(|ns| ns.coll).flatten().unwrap_or_default();
                     if collection_names.iter().any(|&name| name == collection_name) {
@@ -284,15 +282,39 @@ pub struct PeekMongoChange {
 
 impl PeekMongoChange {
     pub fn to_copy_row(&self) -> Option<MongoDBCopyRow> {
-        self.full_document.as_ref().map(|doc| MongoDBCopyRow {
-            columns: doc
-                .iter()
-                .map(|(k, v)| MongoDBColumn {
-                    column_name: k.clone(),
-                    bson_value: v.clone(),
-                })
-                .collect(),
-        })
+        match self.operation_type {
+            OperationType::Delete => {
+                if let Some(doc) = &self.document_key {
+                    return Some(MongoDBCopyRow {
+                        columns: doc
+                            .iter()
+                            .map(|(k, v)| MongoDBColumn {
+                                column_name: k.clone(),
+                                bson_value: v.clone(),
+                            })
+                            .collect(),
+                    });
+                } else {
+                    return None;
+                }
+            }
+            OperationType::Insert | OperationType::Update => {
+                self.full_document
+                    .as_ref()
+                    .map(|doc: &Document| MongoDBCopyRow {
+                        columns: doc
+                            .iter()
+                            .map(|(k, v)| MongoDBColumn {
+                                column_name: k.clone(),
+                                bson_value: v.clone(),
+                            })
+                            .collect(),
+                    })
+            }
+            _ => {
+                return None;
+            }
+        }
     }
 }
 
