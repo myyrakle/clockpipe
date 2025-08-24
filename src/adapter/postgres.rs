@@ -521,7 +521,7 @@ impl PostgresConnection {
         &self,
         publication_name: &str,
         replication_slot_name: &str,
-        limit: i64, // recommendation: 65536
+        limit: u64, // recommendation: 65536
     ) -> errors::Result<Vec<PeekWalChangeResult>> {
         log::debug!(
             "Peeking WAL changes for publication: {publication_name}, slot: {replication_slot_name}, limit: {limit}"

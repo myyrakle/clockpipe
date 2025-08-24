@@ -125,7 +125,6 @@ impl MongoDBConnection {
                     .map(|(k, v)| MongoDBColumn {
                         column_name: k,
                         bson_value: v,
-                        nullable: false,
                     })
                     .collect(),
             })
@@ -141,12 +140,15 @@ impl MongoDBConnection {
     pub async fn peek_changes(
         &self,
         database_name: &str,
-        limit: i64,
+        collection_names: &[&str],
+        limit: u64,
         timeout_ms: u64,
     ) -> errors::Result<PeekMongoChangesResult> {
         let database = self.client.database(database_name);
 
         let mut watch = database.watch();
+
+        watch = watch.full_document(mongodb::options::FullDocumentType::UpdateLookup);
 
         let mut resume_token = if let Some(resume_token) = self.load_resume_token()? {
             log::debug!("Resume token found, resuming from it");
@@ -185,7 +187,7 @@ impl MongoDBConnection {
         loop {
             tokio::select! {
                 _ = (&mut timeout_receiver) => {
-                    println!("Timeout reached");
+                    log::debug!("Timeout reached");
                     break;
                 }
                 Some(event) = watch.next() => {
@@ -193,27 +195,26 @@ impl MongoDBConnection {
                         errors::Errors::PeekChangesFailed(format!("Failed to get next event: {e}"))
                     })?;
 
-                    // println!("Watching changes in the database...");
-
+                    log::debug!("Change event: {:?}", event);
                     let operation_type = event.operation_type;
                     let document_key = event.document_key;
                     let full_document = event.full_document;
 
-                    // println!("Operation Type: {:?}", operation_type);
-                    // println!("Document Key: {:?}", document_key);
-                    // println!("Full Document: {:?}", full_document);
-
-                    changes.push(PeekMongoChange {
-                        operation_type,
-                        document_key,
-                        full_document,
-                    });
+                    let collection_name = event.ns.and_then(|ns| ns.coll).unwrap_or_default();
+                    if collection_names.iter().any(|&name| name == collection_name) {
+                        changes.push(PeekMongoChange {
+                            operation_type,
+                            document_key,
+                            full_document,
+                            collection_name,
+                        });
+                    }
 
                     resume_token = watch.resume_token().ok_or_else(|| {
                         errors::Errors::PeekChangesFailed("Failed to get resume token".to_string())
                     })?;
 
-                    if changes.len() as i64 >= limit {
+                    if changes.len()  >= limit as usize {
                         break;
                     }
                 }
@@ -277,6 +278,37 @@ pub struct PeekMongoChange {
     pub operation_type: OperationType,
     pub document_key: Option<Document>,
     pub full_document: Option<Document>,
+    pub collection_name: String,
+}
+
+impl PeekMongoChange {
+    pub fn to_copy_row(&self) -> Option<MongoDBCopyRow> {
+        match self.operation_type {
+            OperationType::Delete => self.document_key.as_ref().map(|doc| MongoDBCopyRow {
+                columns: doc
+                    .iter()
+                    .map(|(k, v)| MongoDBColumn {
+                        column_name: k.clone(),
+                        bson_value: v.clone(),
+                    })
+                    .collect(),
+            }),
+            OperationType::Insert | OperationType::Update => {
+                self.full_document
+                    .as_ref()
+                    .map(|doc: &Document| MongoDBCopyRow {
+                        columns: doc
+                            .iter()
+                            .map(|(k, v)| MongoDBColumn {
+                                column_name: k.clone(),
+                                bson_value: v.clone(),
+                            })
+                            .collect(),
+                    })
+            }
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -289,7 +321,6 @@ pub struct PeekMongoChangesResult {
 pub struct MongoDBColumn {
     pub column_name: String,
     pub bson_value: Bson,
-    pub nullable: bool,
 }
 
 impl IntoClickhouseValue for MongoDBColumn {

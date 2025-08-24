@@ -190,7 +190,7 @@ impl IPipe for PostgresPipe {
         }
     }
 
-    async fn sync_loop(&self) {
+    async fn sync_loop(&mut self) {
         log::info!("Starting sync loop...");
 
         let publication_name = &self.postgres_config.publication_name;

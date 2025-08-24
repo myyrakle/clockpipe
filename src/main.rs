@@ -36,12 +36,12 @@ async fn main() {
                 config::SourceType::Postgres => {
                     log::info!("Start Postgres pipe");
 
-                    pipes::run_postgres_pipe(config).await;
+                    pipes::postgres::run_postgres_pipe(config).await;
                 }
                 config::SourceType::MongoDB => {
                     log::info!("Start MongoDB pipe");
 
-                    pipes::run_mongodb_pipe(config).await;
+                    pipes::mongodb::run_mongodb_pipe(config).await;
                 }
             }
         }

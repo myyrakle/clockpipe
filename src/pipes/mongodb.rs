@@ -1,3 +1,8 @@
+use std::collections::HashMap;
+
+use itertools::Itertools;
+use mongodb::change_stream::event::OperationType;
+
 use crate::{
     adapter::{
         self, IntoClickhouse,
@@ -6,7 +11,7 @@ use crate::{
     },
     config::Configuraion,
     errors::Errors,
-    pipes::IPipe,
+    pipes::{IPipe, WriteCounter},
 };
 
 #[derive(Debug, Clone, Default)]
@@ -181,254 +186,265 @@ impl IPipe for MongoDBPipe {
         }
     }
 
-    async fn sync_loop(&self) {
+    async fn sync_loop(&mut self) {
         log::info!("Starting sync loop...");
 
-        // 'SYNC_LOOP: loop {
-        //     // 1. Peek new rows
-        //     let peek_result = self
-        //         .postgres_connection
-        //         .peek_wal_changes(
-        //             publication_name,
-        //             replication_slot_name,
-        //             self.config.peek_changes_limit,
-        //         )
-        //         .await;
+        'SYNC_LOOP: loop {
+            // 1. Peek new rows
+            let peek_result = self
+                .mongodb_connection
+                .peek_changes(
+                    &self.mongodb_config.connection.database,
+                    &self
+                        .mongodb_config
+                        .collections
+                        .iter()
+                        .map(|c| c.collection_name.as_str())
+                        .collect::<Vec<&str>>(),
+                    self.config.peek_changes_limit,
+                    self.mongodb_config.peek_timeout_millis,
+                )
+                .await;
 
-        //     let peek_result = match peek_result {
-        //         Ok(peek) => peek,
-        //         Err(e) => {
-        //             // 1.1. Handle peek error. wait and retry
-        //             log::error!("Error peeking WAL changes: {e:?}");
-        //             tokio::time::sleep(std::time::Duration::from_millis(
-        //                 self.config.sleep_millis_when_peek_failed,
-        //             ))
-        //             .await;
-        //             continue 'SYNC_LOOP;
-        //         }
-        //     };
+            let peek_result = match peek_result {
+                Ok(peek) => peek,
+                Err(e) => {
+                    // 1.1. Handle peek error. wait and retry
+                    log::error!("Error peeking stream changes: {e:?}");
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        self.config.sleep_millis_when_peek_failed,
+                    ))
+                    .await;
+                    continue 'SYNC_LOOP;
+                }
+            };
 
-        //     if peek_result.is_empty() {
-        //         log::info!("No new changes found, waiting for next iteration...");
-        //         tokio::time::sleep(std::time::Duration::from_millis(
-        //             self.config.sleep_millis_when_peek_is_empty,
-        //         ))
-        //         .await;
-        //         continue 'SYNC_LOOP;
-        //     }
+            if peek_result.changes.is_empty() {
+                log::info!("No new changes found, waiting for next iteration...");
+                tokio::time::sleep(std::time::Duration::from_millis(
+                    self.config.sleep_millis_when_peek_is_empty,
+                ))
+                .await;
+                continue 'SYNC_LOOP;
+            }
 
-        //     let mut table_log_map = HashMap::new();
+            // group by collection_name
+            let chunk_iter = peek_result
+                .changes
+                .into_iter()
+                .chunk_by(|change| change.collection_name.clone());
 
-        //     let mut batch_insert_queue = HashMap::new();
-        //     let mut batch_delete_queue = HashMap::new();
+            let mut changes_by_collection = HashMap::new();
+            for (collection_name, group) in &chunk_iter {
+                changes_by_collection.insert(collection_name.clone(), group.collect::<Vec<_>>());
+            }
 
-        //     // 2. Parse peeked rows, group by table and prepare for insert/update/delete
-        //     for row in peek_result.iter() {
-        //         let Some(parsed_row) =
-        //             parse_pg_output(&row.data).expect("Failed to parse PgOutput")
-        //         else {
-        //             continue;
-        //         };
+            for (collection_name, rows) in &changes_by_collection {
+                let copy_rows = rows
+                    .iter()
+                    .map(|change| change.to_copy_row().unwrap_or_default())
+                    .collect::<Vec<_>>();
 
-        //         let Some((schema_name, table_name)) =
-        //             self.context.table_relation_map.get(&parsed_row.relation_id)
-        //         else {
-        //             log::warn!(
-        //                 "Relation ID {} not found in context table relation map",
-        //                 parsed_row.relation_id
-        //             );
-        //             continue;
-        //         };
+                if let Err(error) = self
+                    .add_columns_to_table_if_not_exists(collection_name, &copy_rows)
+                    .await
+                {
+                    log::error!(
+                        "Failed to add columns to ClickHouse table {}: {}",
+                        collection_name,
+                        error
+                    );
 
-        //         match parsed_row.message_type {
-        //             MessageType::Insert | MessageType::Update => {
-        //                 let table_info = self
-        //                     .context
-        //                     .tables_map
-        //                     .get(&format!("{schema_name}.{table_name}"))
-        //                     .expect("Table info not found in context");
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        self.config.sleep_millis_when_write_failed,
+                    ))
+                    .await;
 
-        //                 let mask_columns = self
-        //                     .postgres_config
-        //                     .tables
-        //                     .iter()
-        //                     .find(|t| {
-        //                         t.table_name == table_name.as_str()
-        //                             && t.schema_name == schema_name.as_str()
-        //                     })
-        //                     .map_or_else(Vec::new, |t| t.mask_columns.clone());
+                    continue 'SYNC_LOOP;
+                }
 
-        //                 batch_insert_queue
-        //                     .entry(table_name)
-        //                     .or_insert_with(|| BatchWriteEntry {
-        //                         table_info,
-        //                         mask_columns,
-        //                         rows: Vec::new(),
-        //                     })
-        //                     .push(MongoDBCopyRow {
-        //                         columns: parsed_row.payload,
-        //                     });
+                if let Err(error) = self.load_table_table_info(collection_name).await {
+                    log::error!(
+                        "Failed to reload table info for ClickHouse table {}: {}",
+                        collection_name,
+                        error
+                    );
 
-        //                 let count = table_log_map
-        //                     .entry(format!("{schema_name}.{table_name}"))
-        //                     .or_insert(WriteCounter::default());
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        self.config.sleep_millis_when_write_failed,
+                    ))
+                    .await;
 
-        //                 if parsed_row.message_type == MessageType::Insert {
-        //                     count.insert_count += 1;
-        //                 } else {
-        //                     count.update_count += 1;
-        //                 }
-        //             }
-        //             MessageType::Delete => {
-        //                 let source_table_info = self
-        //                     .context
-        //                     .tables_map
-        //                     .get(&format!("{schema_name}.{table_name}"))
-        //                     .expect("Table info not found in context");
+                    continue 'SYNC_LOOP;
+                }
+            }
 
-        //                 batch_delete_queue
-        //                     .entry(table_name)
-        //                     .or_insert_with(|| BatchWriteEntry {
-        //                         table_info: source_table_info,
-        //                         mask_columns: Vec::new(),
-        //                         rows: Vec::new(),
-        //                     })
-        //                     .push(MongoDBCopyRow {
-        //                         columns: parsed_row.payload,
-        //                     });
+            let mut table_log_map = HashMap::new();
 
-        //                 let count = table_log_map
-        //                     .entry(format!("{schema_name}.{table_name}"))
-        //                     .or_insert(WriteCounter::default());
+            let mut batch_insert_queue = HashMap::new();
+            let mut batch_delete_queue: HashMap<String, BatchWriteEntry<'_>> = HashMap::new();
 
-        //                 count.delete_count += 1;
-        //             }
-        //             MessageType::Truncate => {
-        //                 // Truncate is handled separately, no need to queue
+            // 2. Parse peeked rows, group by table and prepare for insert/update/delete
+            for (collection_name, rows) in changes_by_collection {
+                for row in rows {
+                    let copy_row = row.to_copy_row().unwrap_or_default();
 
-        //                 let database = &self.clickhouse_config.connection.database;
+                    match row.operation_type {
+                        OperationType::Insert | OperationType::Update => {
+                            let table_info = self
+                                .context
+                                .tables_map
+                                .get(&collection_name)
+                                .expect("Table info not found in context");
 
-        //                 if let Err(error) = self
-        //                     .clickhouse_connection
-        //                     .truncate_table(database, table_name)
-        //                     .await
-        //                 {
-        //                     log::error!(
-        //                         "Failed to truncate table {}.{}: {}",
-        //                         schema_name,
-        //                         table_name,
-        //                         error
-        //                     );
+                            let mask_columns = self
+                                .mongodb_config
+                                .collections
+                                .iter()
+                                .find(|t| t.collection_name == collection_name.as_str())
+                                .map_or_else(Vec::new, |t| t.mask_columns.clone());
 
-        //                     tokio::time::sleep(std::time::Duration::from_millis(
-        //                         self.config.sleep_millis_when_write_failed,
-        //                     ))
-        //                     .await;
+                            batch_insert_queue
+                                .entry(collection_name.clone())
+                                .or_insert_with(|| BatchWriteEntry {
+                                    table_info,
+                                    mask_columns,
+                                    rows: Vec::new(),
+                                })
+                                .push(copy_row);
 
-        //                     continue 'SYNC_LOOP;
-        //                 }
+                            let count: &mut WriteCounter = table_log_map
+                                .entry(collection_name.clone())
+                                .or_insert(WriteCounter::default());
 
-        //                 log::info!("Table {}.{} was truncated.", schema_name, table_name);
-        //             }
-        //             _ => {}
-        //         }
-        //     }
+                            if row.operation_type == OperationType::Insert {
+                                count.insert_count += 1;
+                            } else {
+                                count.update_count += 1;
+                            }
+                        }
+                        OperationType::Delete => {
+                            let source_table_info = self
+                                .context
+                                .tables_map
+                                .get(&collection_name)
+                                .expect("Table info not found in context");
 
-        //     // 3. Insert/Update rows in ClickHouse
-        //     for (table_name, batch) in batch_insert_queue.iter() {
-        //         let insert_query = self.generate_insert_query(
-        //             &self.clickhouse_config,
-        //             &batch.table_info.clickhouse_columns,
-        //             &batch.table_info.postgres_columns,
-        //             &batch.mask_columns,
-        //             table_name,
-        //             &batch.rows,
-        //         );
+                            batch_delete_queue
+                                .entry(collection_name.clone())
+                                .or_insert_with(|| BatchWriteEntry {
+                                    table_info: source_table_info,
+                                    mask_columns: Vec::new(),
+                                    rows: Vec::new(),
+                                })
+                                .push(copy_row);
 
-        //         if !insert_query.is_empty() {
-        //             if let Err(error) = self
-        //                 .clickhouse_connection
-        //                 .execute_query(&insert_query)
-        //                 .await
-        //             {
-        //                 log::error!("Failed to execute insert query for {table_name}: {error}");
-        //                 tokio::time::sleep(std::time::Duration::from_millis(
-        //                     self.config.sleep_millis_when_write_failed,
-        //                 ))
-        //                 .await;
+                            let count = table_log_map
+                                .entry(collection_name.clone())
+                                .or_insert(WriteCounter::default());
 
-        //                 continue 'SYNC_LOOP;
-        //             }
+                            count.delete_count += 1;
+                        }
+                        _ => {}
+                    }
+                }
+            }
 
-        //             tokio::time::sleep(std::time::Duration::from_millis(
-        //                 self.config.sleep_millis_after_sync_write,
-        //             ))
-        //             .await;
-        //         }
-        //     }
+            // 3. Insert/Update rows in ClickHouse
+            for (table_name, batch) in batch_insert_queue.iter() {
+                let insert_query = self.generate_insert_query(
+                    &self.clickhouse_config,
+                    &batch.table_info.clickhouse_columns,
+                    &Vec::<MongoDBColumn>::new(), // MongoDB does not have a fixed schema, so we pass an empty slice here
+                    &batch.mask_columns,
+                    table_name,
+                    &batch.rows,
+                );
 
-        //     // 4. Delete rows in ClickHouse
-        //     for (table_name, batch) in batch_delete_queue.iter() {
-        //         let delete_query = self.generate_delete_query(
-        //             &self.clickhouse_config,
-        //             &batch.table_info.clickhouse_columns,
-        //             &batch.table_info.postgres_columns,
-        //             table_name,
-        //             &batch.rows,
-        //         );
+                if !insert_query.is_empty() {
+                    if let Err(error) = self
+                        .clickhouse_connection
+                        .execute_query(&insert_query)
+                        .await
+                    {
+                        log::error!("Failed to execute insert query for {table_name}: {error}");
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            self.config.sleep_millis_when_write_failed,
+                        ))
+                        .await;
 
-        //         if !delete_query.is_empty() {
-        //             if let Err(error) = self
-        //                 .clickhouse_connection
-        //                 .execute_query(&delete_query)
-        //                 .await
-        //             {
-        //                 log::error!("Failed to execute delete query for {table_name}: {error}");
-        //                 tokio::time::sleep(std::time::Duration::from_millis(
-        //                     self.config.sleep_millis_when_write_failed,
-        //                 ))
-        //                 .await;
+                        continue 'SYNC_LOOP;
+                    }
 
-        //                 continue 'SYNC_LOOP;
-        //             }
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        self.config.sleep_millis_after_sync_write,
+                    ))
+                    .await;
+                }
+            }
 
-        //             tokio::time::sleep(std::time::Duration::from_millis(
-        //                 self.config.sleep_millis_after_sync_write,
-        //             ))
-        //             .await;
-        //         }
-        //     }
+            // 4. Delete rows in ClickHouse
+            for (table_name, batch) in batch_delete_queue.iter() {
+                let delete_query = self.generate_delete_query(
+                    &self.clickhouse_config,
+                    &batch.table_info.clickhouse_columns,
+                    &Vec::<MongoDBColumn>::new(), // MongoDB does not have a fixed schema, so we pass an empty slice here
+                    table_name,
+                    &batch.rows,
+                );
 
-        //     // 5. Move cursor for next peek
-        //     if let Some(last) = peek_result.last() {
-        //         let advance_key = &last.lsn;
+                if !delete_query.is_empty() {
+                    if let Err(error) = self
+                        .clickhouse_connection
+                        .execute_query(&delete_query)
+                        .await
+                    {
+                        log::error!("Failed to execute delete query for {table_name}: {error}");
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            self.config.sleep_millis_when_write_failed,
+                        ))
+                        .await;
 
-        //         if let Err(e) = self
-        //             .postgres_connection
-        //             .advance_replication_slot(replication_slot_name, advance_key)
-        //             .await
-        //         {
-        //             log::error!("Error advancing exporter: {e:?}");
-        //             continue 'SYNC_LOOP;
-        //         }
-        //     }
+                        continue 'SYNC_LOOP;
+                    }
 
-        //     // 6. Log the changes
-        //     for (table_name, count) in table_log_map.iter() {
-        //         log::info!(
-        //             "Table [{}]: Inserted: {}, Updated: {}, Deleted: {}",
-        //             table_name,
-        //             count.insert_count,
-        //             count.update_count,
-        //             count.delete_count
-        //         );
-        //     }
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        self.config.sleep_millis_after_sync_write,
+                    ))
+                    .await;
+                }
+            }
 
-        //     tokio::time::sleep(std::time::Duration::from_millis(
-        //         self.config.sleep_millis_after_sync_iteration,
-        //     ))
-        //     .await;
-        // }
+            // 5. Move cursor for next peek
+            if let Err(error) = self
+                .mongodb_connection
+                .store_resume_token(&peek_result.resume_token)
+            {
+                log::error!("Failed to store resume token: {error}");
+                tokio::time::sleep(std::time::Duration::from_millis(
+                    self.config.sleep_millis_when_write_failed,
+                ))
+                .await;
+
+                continue 'SYNC_LOOP;
+            }
+
+            // 6. Log the changes
+            for (table_name, count) in table_log_map.iter() {
+                log::info!(
+                    "Table [{}]: Inserted: {}, Updated: {}, Deleted: {}",
+                    table_name,
+                    count.insert_count,
+                    count.update_count,
+                    count.delete_count
+                );
+            }
+
+            tokio::time::sleep(std::time::Duration::from_millis(
+                self.config.sleep_millis_after_sync_iteration,
+            ))
+            .await;
+        }
     }
 }
 
@@ -463,7 +479,6 @@ impl MongoDBPipe {
                         bson_value: mongodb::bson::Bson::ObjectId(
                             mongodb::bson::oid::ObjectId::new(),
                         ),
-                        ..Default::default()
                     }],
                 );
 
@@ -505,7 +520,7 @@ impl MongoDBPipe {
         rows: &[MongoDBCopyRow],
     ) -> Result<(), Errors> {
         let mut columns_to_add = vec![];
-        let clickhouse_columns = self
+        let clickhouse_columns: &MongoDBPipeTableInfo = self
             .context
             .tables_map
             .get(collection_name)
@@ -570,5 +585,17 @@ pub async fn run_mongodb_pipe(config: Configuraion) {
         _ = pipe.run_pipe() => {
             log::info!("MongoDB pipe running...");
         }
+    }
+}
+
+pub struct BatchWriteEntry<'a> {
+    pub table_info: &'a MongoDBPipeTableInfo,
+    pub mask_columns: Vec<String>,
+    pub rows: Vec<MongoDBCopyRow>,
+}
+
+impl BatchWriteEntry<'_> {
+    pub fn push(&mut self, row: MongoDBCopyRow) {
+        self.rows.push(row);
     }
 }

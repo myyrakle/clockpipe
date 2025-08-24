@@ -1,8 +1,6 @@
 pub mod postgres;
-pub use postgres::*;
 
 pub mod mongodb;
-pub use mongodb::*;
 
 use crate::errors::Errors;
 
@@ -19,7 +17,7 @@ pub trait IPipe {
 
     async fn initialize(&mut self);
     async fn first_sync(&self);
-    async fn sync_loop(&self);
+    async fn sync_loop(&mut self);
 }
 
 #[derive(Debug, Clone, Default)]
