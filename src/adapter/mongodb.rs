@@ -200,7 +200,7 @@ impl MongoDBConnection {
                     let document_key = event.document_key;
                     let full_document = event.full_document;
 
-                    let collection_name = event.ns.map(|ns| ns.coll).flatten().unwrap_or_default();
+                    let collection_name = event.ns.and_then(|ns| ns.coll).unwrap_or_default();
                     if collection_names.iter().any(|&name| name == collection_name) {
                         changes.push(PeekMongoChange {
                             operation_type,
@@ -284,21 +284,15 @@ pub struct PeekMongoChange {
 impl PeekMongoChange {
     pub fn to_copy_row(&self) -> Option<MongoDBCopyRow> {
         match self.operation_type {
-            OperationType::Delete => {
-                if let Some(doc) = &self.document_key {
-                    return Some(MongoDBCopyRow {
-                        columns: doc
-                            .iter()
-                            .map(|(k, v)| MongoDBColumn {
-                                column_name: k.clone(),
-                                bson_value: v.clone(),
-                            })
-                            .collect(),
-                    });
-                } else {
-                    return None;
-                }
-            }
+            OperationType::Delete => self.document_key.as_ref().map(|doc| MongoDBCopyRow {
+                columns: doc
+                    .iter()
+                    .map(|(k, v)| MongoDBColumn {
+                        column_name: k.clone(),
+                        bson_value: v.clone(),
+                    })
+                    .collect(),
+            }),
             OperationType::Insert | OperationType::Update => {
                 self.full_document
                     .as_ref()
@@ -312,9 +306,7 @@ impl PeekMongoChange {
                             .collect(),
                     })
             }
-            _ => {
-                return None;
-            }
+            _ => None,
         }
     }
 }

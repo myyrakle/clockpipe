@@ -241,12 +241,12 @@ impl IPipe for MongoDBPipe {
 
             for (collection_name, rows) in &changes_by_collection {
                 let copy_rows = rows
-                    .into_iter()
+                    .iter()
                     .map(|change| change.to_copy_row().unwrap_or_default())
                     .collect::<Vec<_>>();
 
                 if let Err(error) = self
-                    .add_columns_to_table_if_not_exists(&collection_name, &copy_rows)
+                    .add_columns_to_table_if_not_exists(collection_name, &copy_rows)
                     .await
                 {
                     log::error!(
@@ -263,7 +263,7 @@ impl IPipe for MongoDBPipe {
                     continue 'SYNC_LOOP;
                 }
 
-                if let Err(error) = self.load_table_table_info(&collection_name).await {
+                if let Err(error) = self.load_table_table_info(collection_name).await {
                     log::error!(
                         "Failed to reload table info for ClickHouse table {}: {}",
                         collection_name,
@@ -479,7 +479,6 @@ impl MongoDBPipe {
                         bson_value: mongodb::bson::Bson::ObjectId(
                             mongodb::bson::oid::ObjectId::new(),
                         ),
-                        ..Default::default()
                     }],
                 );
 
