@@ -16,7 +16,7 @@ pub struct Configuraion {
     #[serde(default = "default::sleep_millis_after_sync_write")]
     pub sleep_millis_after_sync_write: u64,
     #[serde(default = "default::peek_changes_limit")]
-    pub peek_changes_limit: i64,
+    pub peek_changes_limit: u64,
     #[serde(default = "default::peek_changes_timeout_millis")]
     pub peek_changes_timeout_millis: u64,
 }
@@ -62,6 +62,8 @@ pub struct MongoDBConfig {
     pub resume_token_storage: ResumeTokenStorageType,
     #[serde(default = "default::mongodb::copy_batch_size")]
     pub copy_batch_size: u32,
+    #[serde(default = "default::mongodb::peek_timeout_millis")]
+    pub peek_timeout_millis: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -123,10 +125,15 @@ pub mod default {
         pub fn copy_batch_size() -> u32 {
             COPY_BATCH_SIZE
         }
+
+        pub const PEEK_TIMEOUT_MILLIS: u64 = 5000;
+        pub fn peek_timeout_millis() -> u64 {
+            PEEK_TIMEOUT_MILLIS
+        }
     }
 
-    pub const PEEK_CHANGES_LIMIT: i64 = 65536;
-    pub fn peek_changes_limit() -> i64 {
+    pub const PEEK_CHANGES_LIMIT: u64 = 65536;
+    pub fn peek_changes_limit() -> u64 {
         PEEK_CHANGES_LIMIT
     }
 
