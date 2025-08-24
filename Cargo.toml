@@ -1,11 +1,11 @@
 [package]
 name = "clockpipe"
-version = "0.4.2"
+version = "0.5.0"
 edition = "2024"
 license = "MIT" 
 authors = ["myyrakle <sssang97@naver.com>"] 
 description = "Clickhouse Data Synchronization Pipeline" 
-keywords = ["clickhouse", "postgresql"] 
+keywords = ["clickhouse", "postgresql", "mongodb"] 
 include = ["src/*", "Cargo.toml"]
 exclude = []
 readme = "README.md" 
