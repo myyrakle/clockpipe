@@ -177,6 +177,7 @@ pub struct PublicationTable {
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct PostgresColumn {
     pub column_index: i32,
+    pub real_column_index: i32,
     pub column_name: String,
     pub data_type: String,
     pub length: i32,
@@ -290,7 +291,7 @@ impl IntoClickhouseColumn for PostgresColumn {
     }
 
     fn get_column_index(&self) -> usize {
-        self.column_index as usize
+        self.real_column_index as usize
     }
 
     fn get_comment(&self) -> &str {
@@ -460,7 +461,8 @@ impl PostgresConnection {
     ) -> errors::Result<Vec<PostgresColumn>> {
         let query = r#"
              SELECT 
-                c.ordinal_position as column_index,
+                (ROW_NUMBER() OVER ())::INTEGER as column_index,
+                c.ordinal_position as real_column_index,
                 c.column_name as column_name,
                 c.udt_name as data_type, 
                 coalesce(c.character_maximum_length, 0) as length,
@@ -505,14 +507,7 @@ impl PostgresConnection {
                 errors::Errors::ListTableColumnsFailed(format!("Failed to get columns: {e}"))
             })?;
 
-        let rows = rows
-            .into_iter()
-            .enumerate()
-            .map(|(usize, mut row)| {
-                row.column_index = usize as i32 + 1; // Ensure column_index starts from 1
-                row
-            })
-            .collect::<Vec<_>>();
+        let rows = rows.into_iter().collect::<Vec<_>>();
 
         Ok(rows)
     }
