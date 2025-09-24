@@ -47,6 +47,10 @@ sudo systemctl restart postgresql
 - If a column is suddenly deleted, the values ​​in that column are inserted as default values.
 - If the accumulated WAL exceeds `max_slot_wal_keep_size`, `wal_status=lost` may occur and the CDC connection may be disconnected. In this case, you will need to remove and recreate the replication_slot, which will result in losing any previously accumulated CDC logs.
 
+## Caution
+- If a column is dropped from an existing table during synchronization, problems may occur. This is because pgoutput will contain the data at that point in time, without any information about the column.
+- If you set max_slot_wal_keep_size to -1, be careful about disk bloat. If replication isn't properly "advanced," data will continue to accumulate in the database.
+
 ---
 
 ## PostgreSQL Config
