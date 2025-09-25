@@ -155,7 +155,7 @@ impl IPipe for MongoDBPipe {
 
             let mask_columns = &collection.mask_columns;
 
-            let chunks = rows.chunks(100000);
+            let chunks = rows.chunks(self.config.copy_batch_size);
             let chunk_count = chunks.len();
 
             let logger = ProgressLogger::new(
