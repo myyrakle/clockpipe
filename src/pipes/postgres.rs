@@ -168,8 +168,6 @@ impl IPipe for PostgresPipe {
             );
 
             for (chunk_index, chunk) in chunks.enumerate() {
-                tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-
                 logger.log_progress(chunk_index * chunk.len());
 
                 let chunk_index = chunk_index + 1;
