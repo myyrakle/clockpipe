@@ -1,1 +1,1 @@
-sudo docker buildx build --platform linux/amd64,linux/arm64 -t myyrakle/clockpipe:v0.5.1 --push  .
+sudo docker buildx build --platform linux/amd64,linux/arm64 -t myyrakle/clockpipe:v0.5.2 --push  .
