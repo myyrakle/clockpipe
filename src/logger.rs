@@ -1,3 +1,5 @@
+#![allow(clippy::print_with_newline)]
+
 use std::io::{self, Write};
 
 #[derive(Debug, Clone)]

@@ -157,7 +157,7 @@ impl IPipe for PostgresPipe {
 
             let mask_columns = &table.mask_columns;
 
-            let chunks = rows.chunks(100000);
+            let chunks = rows.chunks(self.config.copy_batch_size);
             let chunk_count = chunks.len();
 
             let logger = ProgressLogger::new(

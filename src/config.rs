@@ -19,6 +19,8 @@ pub struct Configuraion {
     pub peek_changes_limit: u64,
     #[serde(default = "default::peek_changes_timeout_millis")]
     pub peek_changes_timeout_millis: u64,
+    #[serde(default = "default::copy_batch_size")]
+    pub copy_batch_size: usize,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -165,6 +167,11 @@ pub mod default {
     pub const SLEEP_MILLIS_AFTER_SYNC_WRITE: u64 = 100;
     pub fn sleep_millis_after_sync_write() -> u64 {
         SLEEP_MILLIS_AFTER_SYNC_WRITE
+    }
+
+    pub const COPY_BATCH_SIZE: usize = 100000;
+    pub fn copy_batch_size() -> usize {
+        COPY_BATCH_SIZE
     }
 }
 
