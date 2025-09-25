@@ -11,6 +11,7 @@ use crate::{
     },
     config::Configuraion,
     errors::Errors,
+    logger::ProgressLogger,
     pipes::{IPipe, WriteCounter},
 };
 
@@ -157,7 +158,17 @@ impl IPipe for MongoDBPipe {
             let chunks = rows.chunks(100000);
             let chunk_count = chunks.len();
 
+            let logger = ProgressLogger::new(
+                &format!(
+                    "Inserting copied data into ClickHouse table {}.{}...",
+                    self.clickhouse_config.connection.database, collection.collection_name,
+                ),
+                rows.len(),
+            );
+
             for (chunk_index, chunk) in chunks.enumerate() {
+                logger.log_progress(chunk_index * chunk.len());
+
                 let chunk_index = chunk_index + 1;
                 let percent = (chunk_index * 100) / chunk_count;
 
@@ -181,6 +192,8 @@ impl IPipe for MongoDBPipe {
                         .expect("Failed to execute insert query in ClickHouse");
                 }
             }
+
+            logger.clean();
 
             log::info!("Copy completed for collection {collection_name}");
         }

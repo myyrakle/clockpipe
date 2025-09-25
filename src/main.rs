@@ -6,6 +6,7 @@ pub mod adapter;
 mod command;
 pub mod config;
 pub mod errors;
+pub mod logger;
 pub mod pipes;
 
 fn setup_logging() {

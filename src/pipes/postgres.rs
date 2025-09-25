@@ -11,6 +11,7 @@ use crate::{
     },
     config::Configuraion,
     errors::Errors,
+    logger::ProgressLogger,
     pipes::{IPipe, WriteCounter},
 };
 
@@ -135,7 +136,7 @@ impl IPipe for PostgresPipe {
                 .await
                 .expect("Failed to check if table exists")
             {
-                log::debug!(
+                log::info!(
                     "Table {schema_name}.{table_name} already exists in ClickHouse, skipping initial sync.",
                 );
                 continue;
@@ -148,8 +149,6 @@ impl IPipe for PostgresPipe {
                 .await
                 .expect("Failed to copy table data from Postgres");
 
-            log::info!("Inserting copied data into ClickHouse table {schema_name}.{table_name}...",);
-
             let source_table_info = self
                 .context
                 .tables_map
@@ -161,7 +160,16 @@ impl IPipe for PostgresPipe {
             let chunks = rows.chunks(100000);
             let chunk_count = chunks.len();
 
+            let logger = ProgressLogger::new(
+                &format!(
+                    "Inserting copied data into ClickHouse table {schema_name}.{table_name}..."
+                ),
+                rows.len(),
+            );
+
             for (chunk_index, chunk) in chunks.enumerate() {
+                logger.log_progress(chunk_index * chunk.len());
+
                 let chunk_index = chunk_index + 1;
                 let percent = (chunk_index * 100) / chunk_count;
 
@@ -185,6 +193,8 @@ impl IPipe for PostgresPipe {
                         .expect("Failed to execute insert query in ClickHouse");
                 }
             }
+
+            logger.clean();
 
             log::info!("Copy completed for table {schema_name}.{table_name}");
         }
