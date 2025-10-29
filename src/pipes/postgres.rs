@@ -148,6 +148,10 @@ impl IPipe for PostgresPipe {
                 .copy_table_to_stdout(&table.schema_name, &table.table_name)
                 .await
                 .expect("Failed to copy table data from Postgres");
+            log::info!(
+                "Total {} rows fetched from Postgres table {schema_name}.{table_name}",
+                rows.len()
+            );
 
             let source_table_info = self
                 .context
