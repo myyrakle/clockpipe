@@ -596,69 +596,71 @@ impl PostgresConnection {
             ))
         })?;
 
-        // 스트림에서 모든 데이터 수집
+        // 스트림에서 직접 파싱하여 메모리 사용량 최적화
         use futures::StreamExt;
-        let mut result_data = Vec::new();
+
+        let mut rows = Vec::new();
+        let mut current_row = PostgresCopyRow {
+            columns: Vec::new(),
+        };
+        let mut current_word = String::new();
+        let mut total_bytes = 0usize;
 
         let mut stream = Box::pin(copy_sink);
         while let Some(chunk) = stream.next().await {
-            match chunk {
-                Ok(bytes) => result_data.extend_from_slice(&bytes),
+            let bytes = match chunk {
+                Ok(bytes) => bytes,
                 Err(e) => {
                     return Err(errors::Errors::CopyTableFailed(format!(
                         "Error reading COPY data: {e}"
                     )));
                 }
+            };
+
+            total_bytes += bytes.len();
+
+            // 바이트를 UTF-8 문자열로 변환하여 바로 파싱
+            let text = unsafe { std::str::from_utf8_unchecked(&bytes) };
+
+            for c in text.chars() {
+                // column separator
+                if c == '\t' {
+                    if current_word == "\\N" {
+                        current_row.columns.push(PgOutputValue::Null);
+                        current_word.clear();
+                    } else {
+                        current_row
+                            .columns
+                            .push(PgOutputValue::Text(std::mem::take(&mut current_word)));
+                    }
+                    continue;
+                }
+
+                // row separator
+                if c == '\n' {
+                    if current_word == "\\N" {
+                        current_row.columns.push(PgOutputValue::Null);
+                        current_word.clear();
+                    } else if !current_word.is_empty() {
+                        current_row
+                            .columns
+                            .push(PgOutputValue::Text(std::mem::take(&mut current_word)));
+                    }
+
+                    rows.push(std::mem::take(&mut current_row));
+                    continue;
+                }
+
+                current_word.push(c);
             }
         }
 
         log::info!(
-            "Successfully executed COPY TO STDOUT for table {} ({} bytes)",
+            "Successfully executed COPY TO STDOUT for table {} ({} bytes, {} rows)",
             table_name,
-            result_data.len()
+            total_bytes,
+            rows.len()
         );
-
-        let text = String::from_utf8(result_data).map_err(|e| {
-            errors::Errors::CopyTableFailed(format!("Failed to convert bytes to string: {e}"))
-        })?;
-
-        let mut rows = Vec::new();
-
-        let mut current_row = PostgresCopyRow {
-            columns: Vec::new(),
-        };
-        let mut current_word = String::new();
-        for c in text.chars() {
-            // column separator
-            if c == '\t' {
-                if current_word == "\\N" {
-                    current_row.columns.push(PgOutputValue::Null);
-                    current_word.clear();
-                } else {
-                    current_row
-                        .columns
-                        .push(PgOutputValue::Text(std::mem::take(&mut current_word)));
-                }
-                continue;
-            }
-
-            // row separator
-            if c == '\n' {
-                if current_word == "\\N" {
-                    current_row.columns.push(PgOutputValue::Null);
-                    current_word.clear();
-                } else if !current_word.is_empty() {
-                    current_row
-                        .columns
-                        .push(PgOutputValue::Text(std::mem::take(&mut current_word)));
-                }
-
-                rows.push(std::mem::take(&mut current_row));
-                continue;
-            }
-
-            current_word.push(c);
-        }
 
         Ok(rows)
     }
