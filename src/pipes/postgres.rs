@@ -172,12 +172,10 @@ impl IPipe for PostgresPipe {
 
             let mask_columns = &table.mask_columns;
 
-            let mut current_index = 0_usize;
+            let mut processed_rows = 0_usize;
 
             let mut rows = Vec::new();
             while let Some(row_chunks) = copy_receiver.recv().await {
-                let row_count = row_chunks.len();
-
                 rows.extend(row_chunks);
 
                 // If buffer size is less than threshold, continue accumulating
@@ -185,20 +183,13 @@ impl IPipe for PostgresPipe {
                     continue;
                 }
 
-                log::info!(
-                    "Total {} rows fetched from Postgres table {schema_name}.{table_name}",
-                    rows.len()
-                );
+                logger.log_progress(processed_rows);
 
-                logger.log_progress(current_index * row_count);
-
-                let percent = (current_index * 100) / total_count;
+                let percent = (processed_rows * 100) / total_count;
 
                 log::debug!(
-                    "Processing chunk {percent}% ({current_index}/{total_count}) for table {schema_name}.{table_name}",
+                    "Processing chunk {percent}% ({processed_rows}/{total_count}) for table {schema_name}.{table_name}",
                 );
-
-                current_index += row_count;
 
                 let insert_query = self.generate_insert_query(
                     &self.clickhouse_config,
@@ -215,11 +206,12 @@ impl IPipe for PostgresPipe {
                         .await
                         .expect("Failed to execute insert query in ClickHouse");
                 }
+
+                processed_rows += rows.len();
+                rows.clear();
             }
 
             logger.clean();
-
-            rows.clear();
 
             log::info!("Copy completed for table {schema_name}.{table_name}");
         }
