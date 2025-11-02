@@ -486,9 +486,7 @@ impl PostgresConnection {
         })?;
 
         if result.is_empty() {
-            return Err(errors::Errors::GetTableCommentFailed(format!(
-                "No comment found for table {database_name}.{table_name}"
-            )));
+            return Ok(String::new());
         }
 
         Ok(result[0].0.clone())
