@@ -453,6 +453,47 @@ impl PostgresConnection {
         Ok(Some(row))
     }
 
+    pub async fn get_comment_from_table(
+        &self,
+        database_name: &str,
+        table_name: &str,
+    ) -> errors::Result<String> {
+        let result: Vec<(String,)> = sqlx::query_as(
+            r#"
+            SELECT 
+                pd.description as comment
+            FROM 
+                pg_catalog.pg_description pd
+            JOIN 
+                pg_catalog.pg_class pc 
+            ON 
+                pd.objoid = pc.oid
+            JOIN 
+                pg_catalog.pg_namespace pn 
+            ON 
+                pc.relnamespace = pn.oid
+            WHERE 
+                pc.relname = $1 
+                AND pn.nspname = $2
+            "#,
+        )
+        .bind(table_name)
+        .bind(database_name)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| {
+            errors::Errors::GetTableNameFailed(format!("Failed to get table comment: {e}"))
+        })?;
+
+        if result.is_empty() {
+            return Err(errors::Errors::GetTableCommentFailed(format!(
+                "No comment found for table {database_name}.{table_name}"
+            )));
+        }
+
+        Ok(result[0].0.clone())
+    }
+
     pub async fn list_columns_by_tablename(
         &self,
         database_name: &str,
