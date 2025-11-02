@@ -142,8 +142,23 @@ impl IPipe for PostgresPipe {
                 continue;
             }
 
-            log::info!("Copying data from Postgres table {schema_name}.{table_name}...",);
-            let rows = self
+            let total_count =
+                self.postgres_connection
+                    .count_table_rows(schema_name, table_name)
+                    .await
+                    .expect("Failed to count table rows in Postgres") as usize;
+
+            let logger = ProgressLogger::new(
+                &format!(
+                    "Inserting copied data into ClickHouse table {schema_name}.{table_name}..."
+                ),
+                total_count,
+            );
+
+            log::info!(
+                "Copying data from Postgres table {schema_name}.{table_name}... ({total_count} rows)",
+            );
+            let mut copy_receiver = self
                 .postgres_connection
                 .copy_table_to_stdout(&table.schema_name, &table.table_name)
                 .await
@@ -157,24 +172,23 @@ impl IPipe for PostgresPipe {
 
             let mask_columns = &table.mask_columns;
 
-            let chunks = rows.chunks(self.config.copy_batch_size);
-            let chunk_count = chunks.len();
+            let mut processed_rows = 0_usize;
 
-            let logger = ProgressLogger::new(
-                &format!(
-                    "Inserting copied data into ClickHouse table {schema_name}.{table_name}..."
-                ),
-                rows.len(),
-            );
+            let mut rows = Vec::new();
+            while let Some(row_chunks) = copy_receiver.recv().await {
+                rows.extend(row_chunks);
 
-            for (chunk_index, chunk) in chunks.enumerate() {
-                logger.log_progress(chunk_index * chunk.len());
+                // If buffer size is less than threshold, continue accumulating
+                if rows.len() < self.config.copy_batch_size {
+                    continue;
+                }
 
-                let chunk_index = chunk_index + 1;
-                let percent = (chunk_index * 100) / chunk_count;
+                logger.log_progress(processed_rows);
+
+                let percent = (processed_rows * 100) / total_count;
 
                 log::debug!(
-                    "Processing chunk {percent}% ({chunk_index}/{chunk_count}) for table {schema_name}.{table_name}",
+                    "Processing chunk {percent}% ({processed_rows}/{total_count}) for table {schema_name}.{table_name}",
                 );
 
                 let insert_query = self.generate_insert_query(
@@ -183,7 +197,7 @@ impl IPipe for PostgresPipe {
                     &source_table_info.postgres_columns,
                     mask_columns,
                     &table.table_name,
-                    chunk,
+                    &rows,
                 );
 
                 if !insert_query.is_empty() {
@@ -192,6 +206,9 @@ impl IPipe for PostgresPipe {
                         .await
                         .expect("Failed to execute insert query in ClickHouse");
                 }
+
+                processed_rows += rows.len();
+                rows.clear();
             }
 
             logger.clean();

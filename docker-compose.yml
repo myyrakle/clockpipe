@@ -1,0 +1,22 @@
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.3
+    environment:
+      CLICKHOUSE_DB: benchmark
+      CLICKHOUSE_USER: user
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+      CLICKHOUSE_PASSWORD: q1w2e3r4
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    ports:
+      - "18123:8123"   # ClickHouse HTTP interface
+      - "19000:9000"   # ClickHouse native protocol
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 8096M
+
+volumes:
+  clickhouse_data:
+    driver: local
