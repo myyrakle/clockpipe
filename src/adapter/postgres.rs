@@ -517,6 +517,33 @@ impl PostgresConnection {
         Ok(rows)
     }
 
+    pub async fn count_table_rows(
+        &self,
+        schema_name: &str,
+        table_name: &str,
+    ) -> errors::Result<i64> {
+        let query = format!(
+            r#"
+            SELECT c.reltuples::bigint AS estimate
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE c.relname = '{table_name}'
+            AND n.nspname = '{schema_name}';
+            "#,
+        );
+
+        let result: (i64,) = sqlx::query_as(&query)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| {
+                errors::Errors::CountTableRowsFailed(format!(
+                    "Failed to count rows in table {schema_name}.{table_name}: {e}"
+                ))
+            })?;
+
+        Ok(result.0)
+    }
+
     pub async fn peek_wal_changes(
         &self,
         publication_name: &str,
@@ -566,7 +593,7 @@ impl PostgresConnection {
         &self,
         schema_name: &str,
         table_name: &str,
-    ) -> errors::Result<Vec<PostgresCopyRow>> {
+    ) -> errors::Result<tokio::sync::mpsc::Receiver<Vec<PostgresCopyRow>>> {
         let query = format!("COPY (SELECT * FROM {schema_name}.{table_name}) TO STDOUT");
 
         log::debug!("Executing COPY TO STDOUT query: {query}");
@@ -596,72 +623,78 @@ impl PostgresConnection {
             ))
         })?;
 
-        // 스트림에서 직접 파싱하여 메모리 사용량 최적화
-        use futures::StreamExt;
+        let (sender, receiver) = tokio::sync::mpsc::channel(10000);
 
-        let mut rows = Vec::new();
-        let mut current_row = PostgresCopyRow {
-            columns: Vec::new(),
-        };
-        let mut current_word = String::new();
-        let mut total_bytes = 0usize;
+        let table_name = table_name.to_string();
 
-        let mut stream = Box::pin(copy_sink);
-        while let Some(chunk) = stream.next().await {
-            let bytes = match chunk {
-                Ok(bytes) => bytes,
-                Err(e) => {
-                    return Err(errors::Errors::CopyTableFailed(format!(
-                        "Error reading COPY data: {e}"
-                    )));
-                }
+        tokio::spawn(async move {
+            // 스트림에서 직접 파싱하여 메모리 사용량 최적화
+            use futures::StreamExt;
+
+            let mut current_row = PostgresCopyRow {
+                columns: Vec::new(),
             };
+            let mut current_word = String::new();
 
-            total_bytes += bytes.len();
+            let mut stream: std::pin::Pin<Box<tokio_postgres::CopyOutStream>> = Box::pin(copy_sink);
+            while let Some(chunk) = stream.next().await {
+                let mut rows = Vec::new();
 
-            // 바이트를 UTF-8 문자열로 변환하여 바로 파싱
-            let text = unsafe { std::str::from_utf8_unchecked(&bytes) };
-
-            for c in text.chars() {
-                // column separator
-                if c == '\t' {
-                    if current_word == "\\N" {
-                        current_row.columns.push(PgOutputValue::Null);
-                        current_word.clear();
-                    } else {
-                        current_row
-                            .columns
-                            .push(PgOutputValue::Text(std::mem::take(&mut current_word)));
+                let bytes = match chunk {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        log::error!("Error reading COPY data for table {table_name}: {error}");
+                        break;
                     }
-                    continue;
+                };
+
+                // 바이트를 UTF-8 문자열로 변환하여 바로 파싱
+                let text = unsafe { std::str::from_utf8_unchecked(&bytes) };
+
+                for c in text.chars() {
+                    // column separator
+                    if c == '\t' {
+                        if current_word == "\\N" {
+                            current_row.columns.push(PgOutputValue::Null);
+                            current_word.clear();
+                        } else {
+                            current_row
+                                .columns
+                                .push(PgOutputValue::Text(std::mem::take(&mut current_word)));
+                        }
+                        continue;
+                    }
+
+                    // row separator
+                    if c == '\n' {
+                        if current_word == "\\N" {
+                            current_row.columns.push(PgOutputValue::Null);
+                            current_word.clear();
+                        } else if !current_word.is_empty() {
+                            current_row
+                                .columns
+                                .push(PgOutputValue::Text(std::mem::take(&mut current_word)));
+                        }
+
+                        rows.push(std::mem::take(&mut current_row));
+                        continue;
+                    }
+
+                    current_word.push(c);
                 }
 
-                // row separator
-                if c == '\n' {
-                    if current_word == "\\N" {
-                        current_row.columns.push(PgOutputValue::Null);
-                        current_word.clear();
-                    } else if !current_word.is_empty() {
-                        current_row
-                            .columns
-                            .push(PgOutputValue::Text(std::mem::take(&mut current_word)));
-                    }
-
-                    rows.push(std::mem::take(&mut current_row));
-                    continue;
-                }
-
-                current_word.push(c);
+                sender
+                    .send(rows)
+                    .await
+                    .map_err(|e| {
+                        errors::Errors::CopyTableFailed(format!(
+                            "Failed to send copied rows for table {table_name}: {e}"
+                        ))
+                    })
+                    .unwrap();
             }
-        }
+        });
 
-        log::info!(
-            "Successfully executed COPY TO STDOUT for table {} ({} bytes, {} rows)",
-            table_name,
-            total_bytes,
-            rows.len()
-        );
-
-        Ok(rows)
+        Ok(receiver)
     }
 }

@@ -142,16 +142,27 @@ impl IPipe for PostgresPipe {
                 continue;
             }
 
-            log::info!("Copying data from Postgres table {schema_name}.{table_name}...",);
-            let rows = self
+            let total_count =
+                self.postgres_connection
+                    .count_table_rows(schema_name, table_name)
+                    .await
+                    .expect("Failed to count table rows in Postgres") as usize;
+
+            let logger = ProgressLogger::new(
+                &format!(
+                    "Inserting copied data into ClickHouse table {schema_name}.{table_name}..."
+                ),
+                total_count,
+            );
+
+            log::info!(
+                "Copying data from Postgres table {schema_name}.{table_name}... ({total_count} rows)",
+            );
+            let mut copy_receiver = self
                 .postgres_connection
                 .copy_table_to_stdout(&table.schema_name, &table.table_name)
                 .await
                 .expect("Failed to copy table data from Postgres");
-            log::info!(
-                "Total {} rows fetched from Postgres table {schema_name}.{table_name}",
-                rows.len()
-            );
 
             let source_table_info = self
                 .context
@@ -161,25 +172,33 @@ impl IPipe for PostgresPipe {
 
             let mask_columns = &table.mask_columns;
 
-            let chunks = rows.chunks(self.config.copy_batch_size);
-            let chunk_count = chunks.len();
+            let mut current_index = 0_usize;
 
-            let logger = ProgressLogger::new(
-                &format!(
-                    "Inserting copied data into ClickHouse table {schema_name}.{table_name}..."
-                ),
-                rows.len(),
-            );
+            let mut rows = Vec::new();
+            while let Some(row_chunks) = copy_receiver.recv().await {
+                let row_count = row_chunks.len();
 
-            for (chunk_index, chunk) in chunks.enumerate() {
-                logger.log_progress(chunk_index * chunk.len());
+                rows.extend(row_chunks);
 
-                let chunk_index = chunk_index + 1;
-                let percent = (chunk_index * 100) / chunk_count;
+                // If buffer size is less than threshold, continue accumulating
+                if rows.len() < self.config.copy_batch_size {
+                    continue;
+                }
+
+                log::info!(
+                    "Total {} rows fetched from Postgres table {schema_name}.{table_name}",
+                    rows.len()
+                );
+
+                logger.log_progress(current_index * row_count);
+
+                let percent = (current_index * 100) / total_count;
 
                 log::debug!(
-                    "Processing chunk {percent}% ({chunk_index}/{chunk_count}) for table {schema_name}.{table_name}",
+                    "Processing chunk {percent}% ({current_index}/{total_count}) for table {schema_name}.{table_name}",
                 );
+
+                current_index += row_count;
 
                 let insert_query = self.generate_insert_query(
                     &self.clickhouse_config,
@@ -187,7 +206,7 @@ impl IPipe for PostgresPipe {
                     &source_table_info.postgres_columns,
                     mask_columns,
                     &table.table_name,
-                    chunk,
+                    &rows,
                 );
 
                 if !insert_query.is_empty() {
@@ -199,6 +218,8 @@ impl IPipe for PostgresPipe {
             }
 
             logger.clean();
+
+            rows.clear();
 
             log::info!("Copy completed for table {schema_name}.{table_name}");
         }

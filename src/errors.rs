@@ -18,6 +18,7 @@ pub enum Errors {
     ReplicationSlotAdvanceFailed(String),
     PgOutputParseError(String),
     CopyTableFailed(String),
+    CountTableRowsFailed(String),
     ResumeTokenParseError(String),
 }
 
@@ -60,6 +61,7 @@ impl std::fmt::Display for Errors {
             }
             Errors::ClickhouseDatabaseError(msg) => write!(f, "ClickHouse database error: {msg}"),
             Errors::CopyTableFailed(msg) => write!(f, "Failed to copy table data: {msg}"),
+            Errors::CountTableRowsFailed(msg) => write!(f, "Failed to count table rows: {msg}"),
             Errors::ResumeTokenParseError(msg) => write!(f, "Failed to parse resume token: {msg}"),
         }
     }
