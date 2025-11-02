@@ -578,6 +578,11 @@ impl PostgresPipe {
                 .list_columns_by_tablename(&table.schema_name, &table.table_name)
                 .await?;
 
+            let table_comment = self
+                .postgres_connection
+                .get_comment_from_table(&table.schema_name, &table.table_name)
+                .await?;
+
             if clickhouse_table_not_exists {
                 log::info!(
                     "Table {}.{} does not exist in ClickHouse, creating it",
@@ -588,6 +593,7 @@ impl PostgresPipe {
                     &self.clickhouse_config.connection.database,
                     &table.table_name,
                     &postgres_columns,
+                    &table_comment,
                 );
 
                 self.clickhouse_connection

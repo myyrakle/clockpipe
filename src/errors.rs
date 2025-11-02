@@ -8,6 +8,7 @@ pub enum Errors {
     DatabasePingError(String),
     TableNotFoundError(String),
     GetTableNameFailed(String),
+    GetTableCommentFailed(String),
     ListTableColumnsFailed(String),
     PublicationCreateFailed(String),
     PublicationAddFailed(String),
@@ -40,6 +41,7 @@ impl std::fmt::Display for Errors {
             Errors::DatabasePingError(msg) => write!(f, "Database ping error: {msg}"),
             Errors::TableNotFoundError(msg) => write!(f, "Table not found: {msg}"),
             Errors::GetTableNameFailed(msg) => write!(f, "Failed to get table name: {msg}"),
+            Errors::GetTableCommentFailed(msg) => write!(f, "Failed to get table comment: {msg}"),
             Errors::PublicationCreateFailed(msg) => {
                 write!(f, "Failed to create publication: {msg}")
             }
