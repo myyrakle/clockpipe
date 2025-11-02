@@ -493,6 +493,7 @@ impl MongoDBPipe {
                             mongodb::bson::oid::ObjectId::new(),
                         ),
                     }],
+                    "",
                 );
 
                 self.clickhouse_connection

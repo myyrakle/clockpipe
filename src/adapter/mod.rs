@@ -52,6 +52,7 @@ pub trait IntoClickhouse {
         database_name: &str,
         table_name: &str,
         columns: &[impl IntoClickhouseColumn],
+        comment: &str,
     ) -> String {
         let mut query = format!("CREATE TABLE {database_name}.{table_name}");
         query.push('(');
@@ -79,15 +80,18 @@ pub trait IntoClickhouse {
             .join(", ");
 
         query.push(')');
-        query.push_str(" ENGINE = ReplacingMergeTree()");
+        query.push_str(" ENGINE = ReplacingMergeTree()\n");
         if !primary_keys.is_empty() {
-            query.push_str(format!(" ORDER BY ({primary_keys})").as_str());
+            query.push_str(format!("ORDER BY ({primary_keys})\n").as_str());
         }
-        query.push_str("SETTINGS");
-        query.push_str(format!(" index_granularity = {INDEX_GRANULARITY}, ",).as_str());
+        query.push_str("SETTINGS\n");
+        query.push_str(format!("index_granularity = {INDEX_GRANULARITY}\n",).as_str());
         query.push_str(
-            format!(" min_age_to_force_merge_seconds = {MIN_AGE_TO_FORCE_MERGE_SECONDS}",).as_str(),
+            format!(", min_age_to_force_merge_seconds = {MIN_AGE_TO_FORCE_MERGE_SECONDS}\n",)
+                .as_str(),
         );
+
+        query.push_str(format!("COMMENT '{}'\n", comment.replace("'", "''")).as_str());
 
         query.push(';');
 
