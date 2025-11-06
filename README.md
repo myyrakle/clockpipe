@@ -11,6 +11,7 @@
 - MongoDB (ready)
 - MySQL (not yet)
 - CassandraDB (not yet)
+- ScyllaDB (not yet)
 
 ## Install
 
