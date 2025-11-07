@@ -1,7 +1,7 @@
 use std::{path::PathBuf, time::Duration};
 
 use base64::Engine;
-use futures::{StreamExt, TryStreamExt};
+use futures::StreamExt;
 use mongodb::{
     Client,
     bson::{Bson, Document, doc, spec::ElementType},
@@ -110,7 +110,7 @@ impl MongoDBConnection {
         &self,
         database_name: &str,
         collection_name: &str,
-    ) -> errors::Result<Vec<MongoDBCopyRow>> {
+    ) -> errors::Result<tokio::sync::mpsc::Receiver<MongoDBCopyRow>> {
         let database = self.client.database(database_name);
         let collection = database.collection::<Document>(collection_name);
 
@@ -127,26 +127,36 @@ impl MongoDBConnection {
                 errors::Errors::DatabaseConnectionError(format!("Failed to create cursor: {e}"))
             })?;
 
-        let mut documents = Vec::new();
+        let (sender, receiver) = tokio::sync::mpsc::channel(10000);
 
-        while let Some(doc) = cursor.try_next().await.map_err(|e| {
-            errors::Errors::DatabaseConnectionError(format!("Failed to fetch document: {e}"))
-        })? {
-            documents.push(doc);
-        }
+        tokio::spawn(async move {
+            while let Some(doc) = cursor.next().await {
+                match doc {
+                    Err(e) => {
+                        log::error!("Failed to fetch document: {}", e);
+                        continue;
+                    }
+                    Ok(doc) => {
+                        let copy_row = MongoDBCopyRow {
+                            columns: doc
+                                .iter()
+                                .map(|(k, v)| MongoDBColumn {
+                                    column_name: k.clone(),
+                                    bson_value: v.clone(),
+                                })
+                                .collect(),
+                        };
 
-        Ok(documents
-            .into_iter()
-            .map(|doc| MongoDBCopyRow {
-                columns: doc
-                    .into_iter()
-                    .map(|(k, v)| MongoDBColumn {
-                        column_name: k,
-                        bson_value: v,
-                    })
-                    .collect(),
-            })
-            .collect())
+                        if let Err(e) = sender.send(copy_row).await {
+                            log::error!("Failed to send document: {}", e);
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(receiver)
     }
 
     // Peeks changes in the MongoDB database.
