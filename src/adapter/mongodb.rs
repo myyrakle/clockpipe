@@ -84,6 +84,24 @@ impl MongoDBConnection {
         }
     }
 
+    pub async fn count_documents(
+        &self,
+        database_name: &str,
+        table_name: &str,
+    ) -> errors::Result<u64> {
+        let database = self.client.database(database_name);
+        let collection = database.collection::<Document>(table_name);
+
+        let count = collection.count_documents(doc! {}).await.map_err(|e| {
+            errors::Errors::CountTableRowsFailed(format!(
+                "Failed to count documents in collection {}: {e}",
+                table_name
+            ))
+        })?;
+
+        Ok(count)
+    }
+
     // Copies data from a MongoDB collection to a vector of documents.
     // The `batch_size` parameter specifies how many documents to fetch at once.
     // Returns a vector of documents.
