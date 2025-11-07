@@ -1,0 +1,87 @@
+###
+PUT http://localhost:6333/collections/test_collection2
+Content-Type: application/json
+
+{
+    "vectors": {
+        "size": 3,
+        "distance": "Dot"
+    }
+}
+###
+
+###
+PUT http://localhost:6333/collections/test_collection
+Content-Type: application/json
+
+{
+    "vectors": {
+        "size": 3,
+        "distance": "Dot"
+    }
+}
+###
+
+###
+DELETE http://localhost:6333/collections/test_collection
+Content-Type: application/json
+
+{
+}
+###
+
+
+
+###
+GET http://localhost:6333/collections/test_collection
+Content-Type: application/json
+
+{
+}
+###
+
+
+
+###
+POST http://localhost:6333/collections/test_collection/points/count
+Content-Type: application/json
+
+{
+}
+###
+
+
+###
+POST http://localhost:6333/collections/test_collection/points/truncate
+Content-Type: application/json
+
+{
+}
+###
+
+
+
+###
+PUT http://localhost:6333/collections/test_collection/points
+Content-Type: application/json
+
+{
+    "points": 
+    [
+        {
+            "id": "76874cce-1fb9-4e16-9b0b-f085ac06ed6f",
+            "payload": {
+                "color": "red"
+            }, 
+            "vector": [0.1, 0.2, 0.3]
+        },
+        {
+            "id": "f4d1c8e2-3b6a-4c5e-9f7e-2d3b6c8e2a1b",
+            "payload": {
+                "color": "blue"
+            }, 
+            "vector": [0.4, 0.5, 0.6]
+        }
+    ]
+}
+###
