@@ -114,7 +114,7 @@ impl IPipe for MongoDBPipe {
 
             if self
                 .clickhouse_connection
-                .table_is_not_empty(&clickhouse_database_name, &collection.collection_name)
+                .table_is_not_empty(clickhouse_database_name, &collection.collection_name)
                 .await
                 .expect("Failed to check if table exists")
             {
@@ -126,7 +126,7 @@ impl IPipe for MongoDBPipe {
 
             let total_count =
                 self.mongodb_connection
-                    .count_documents(&database_name, &collection.collection_name)
+                    .count_documents(database_name, &collection.collection_name)
                     .await
                     .expect("Failed to count documents in MongoDB") as usize;
 
@@ -136,7 +136,7 @@ impl IPipe for MongoDBPipe {
 
             let mut copy_receiver = self
                 .mongodb_connection
-                .copy_collection(&database_name, &collection.collection_name)
+                .copy_collection(database_name, &collection.collection_name)
                 .await
                 .expect("Failed to copy collection data from MongoDB");
 
