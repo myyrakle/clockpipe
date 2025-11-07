@@ -101,6 +101,8 @@ impl IPipe for MongoDBPipe {
         log::info!("Starting initial sync...");
 
         for collection in &self.mongodb_config.collections {
+            let clickhouse_database_name = &self.clickhouse_config.connection.database;
+            let database_name = &self.mongodb_config.connection.database;
             let collection_name = &collection.collection_name;
 
             if collection.skip_copy {
@@ -112,10 +114,7 @@ impl IPipe for MongoDBPipe {
 
             if self
                 .clickhouse_connection
-                .table_is_not_empty(
-                    &self.clickhouse_config.connection.database,
-                    &collection.collection_name,
-                )
+                .table_is_not_empty(&clickhouse_database_name, &collection.collection_name)
                 .await
                 .expect("Failed to check if table exists")
             {
@@ -125,56 +124,61 @@ impl IPipe for MongoDBPipe {
                 continue;
             }
 
-            log::info!("Copying data from MongoDB collection {collection_name}...",);
+            let total_count =
+                self.mongodb_connection
+                    .count_documents(&database_name, &collection.collection_name)
+                    .await
+                    .expect("Failed to count documents in MongoDB") as usize;
 
-            let rows = self
+            log::info!(
+                "Copying data from MongoDB collection {collection_name}... ({total_count} rows)",
+            );
+
+            let mut copy_receiver = self
                 .mongodb_connection
-                .copy_collection(
-                    &self.mongodb_config.connection.database,
-                    &collection.collection_name,
-                )
+                .copy_collection(&database_name, &collection.collection_name)
                 .await
                 .expect("Failed to copy collection data from MongoDB");
 
-            log::info!(
-                "Fetched {} rows from MongoDB collection {collection_name}",
-                rows.len()
-            );
-
-            self.add_columns_to_table_if_not_exists(&collection.collection_name, &rows)
-                .await
-                .expect("Failed to add columns to ClickHouse table if not exists");
-
-            log::info!("Inserting copied data into ClickHouse table {collection_name}...",);
-
-            let source_table_info = self
-                .context
-                .tables_map
-                .get(&collection.collection_name)
-                .expect("Table info not found in context");
-
-            let mask_columns = &collection.mask_columns;
-
-            let chunks = rows.chunks(self.config.copy_batch_size);
-            let chunk_count = chunks.len();
-
             let logger = ProgressLogger::new(
                 &format!(
-                    "Inserting copied data into ClickHouse table {}.{}...",
-                    self.clickhouse_config.connection.database, collection.collection_name,
+                    "Inserting copied data into ClickHouse table {database_name}.{collection_name}..."
                 ),
-                rows.len(),
+                total_count,
             );
 
-            for (chunk_index, chunk) in chunks.enumerate() {
-                logger.log_progress(chunk_index * chunk.len());
+            let mut processed_rows = 0_usize;
 
-                let chunk_index = chunk_index + 1;
-                let percent = (chunk_index * 100) / chunk_count;
+            let mut rows = Vec::new();
+            while let Some(row) = copy_receiver.recv().await {
+                rows.push(row);
+
+                // If buffer size is less than threshold, continue accumulating
+                if rows.len() < self.config.copy_batch_size {
+                    continue;
+                }
+
+                logger.log_progress(processed_rows);
+
+                let percent = (processed_rows * 100) / total_count;
 
                 log::debug!(
-                    "Processing chunk {percent}% ({chunk_index}/{chunk_count}) for collection {collection_name}"
+                    "Processing chunk {percent}% ({processed_rows}/{total_count}) for table {database_name}.{collection_name}",
                 );
+
+                self.add_columns_to_table_if_not_exists(&collection.collection_name, &rows)
+                    .await
+                    .expect("Failed to add columns to ClickHouse table if not exists");
+
+                log::info!("Inserting copied data into ClickHouse table {collection_name}...",);
+
+                let source_table_info = self
+                    .context
+                    .tables_map
+                    .get(&collection.collection_name)
+                    .expect("Table info not found in context");
+
+                let mask_columns = &collection.mask_columns;
 
                 let insert_query = self.generate_insert_query(
                     &self.clickhouse_config,
@@ -182,7 +186,7 @@ impl IPipe for MongoDBPipe {
                     &Vec::<MongoDBColumn>::new(), // MongoDB does not have a fixed schema, so we pass an empty slice here
                     mask_columns,
                     &collection.collection_name,
-                    chunk,
+                    &rows,
                 );
 
                 if !insert_query.is_empty() {
@@ -191,6 +195,9 @@ impl IPipe for MongoDBPipe {
                         .await
                         .expect("Failed to execute insert query in ClickHouse");
                 }
+
+                processed_rows += rows.len();
+                rows.truncate(0);
             }
 
             logger.clean();
