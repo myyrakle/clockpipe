@@ -100,55 +100,62 @@ impl IPipe for MongoDBPipe {
     async fn first_sync(&self) {
         log::info!("Starting initial sync...");
 
+        // 1. For each table in MongoDB config
         for collection in &self.mongodb_config.collections {
             let clickhouse_database_name = &self.clickhouse_config.connection.database;
-            let database_name = &self.mongodb_config.connection.database;
-            let collection_name = &collection.collection_name;
+            let mongodb_database_name = &self.mongodb_config.connection.database;
+            let mongodb_collection_name = &collection.collection_name;
 
+            // 2. Check if skip_copy is set
+            // If set, skip the initial sync for this table
             if collection.skip_copy {
                 log::debug!(
-                    "Skipping initial sync for {collection_name} as skip_copy is set to true"
+                    "Skipping initial sync for {mongodb_collection_name} as skip_copy is set to true"
                 );
                 continue;
             }
 
+            // 3. Check if table is not empty in ClickHouse
+            // If not empty, skip the initial sync for this table
             if self
                 .clickhouse_connection
-                .table_is_not_empty(clickhouse_database_name, &collection.collection_name)
+                .table_is_not_empty(clickhouse_database_name, mongodb_collection_name)
                 .await
                 .expect("Failed to check if table exists")
             {
                 log::debug!(
-                    "Collection {collection_name} already exists in ClickHouse, skipping initial sync.",
+                    "Collection {mongodb_collection_name} already exists in ClickHouse, skipping initial sync.",
                 );
                 continue;
             }
 
+            // 4. get total row count in MongoDB collection (for progress logging only)
             let total_count =
                 self.mongodb_connection
-                    .count_documents(database_name, &collection.collection_name)
+                    .count_documents(mongodb_database_name, mongodb_collection_name)
                     .await
                     .expect("Failed to count documents in MongoDB") as usize;
 
+            // 5. Start copying data from MongoDB to ClickHouse
             log::info!(
-                "Copying data from MongoDB collection {collection_name}... ({total_count} rows)",
+                "Copying data from MongoDB collection {mongodb_collection_name}... ({total_count} rows)",
             );
 
             let mut copy_receiver = self
                 .mongodb_connection
-                .copy_collection(database_name, &collection.collection_name)
+                .copy_collection(mongodb_database_name, mongodb_collection_name)
                 .await
                 .expect("Failed to copy collection data from MongoDB");
 
+            let mut processed_rows = 0_usize;
             let logger = ProgressLogger::new(
                 &format!(
-                    "Inserting copied data into ClickHouse table {database_name}.{collection_name}..."
+                    "Inserting copied data into ClickHouse table {mongodb_database_name}.{mongodb_collection_name}..."
                 ),
                 total_count,
             );
 
-            let mut processed_rows = 0_usize;
-
+            // 6. Receive copied rows in batches and insert into ClickHouse
             let mut rows = Vec::new();
             while let Some(row) = copy_receiver.recv().await {
                 rows.push(row);
@@ -158,28 +165,25 @@ impl IPipe for MongoDBPipe {
                     continue;
                 }
 
-                logger.log_progress(processed_rows);
-
-                let percent = (processed_rows * 100) / total_count;
-
-                log::debug!(
-                    "Processing chunk {percent}% ({processed_rows}/{total_count}) for table {database_name}.{collection_name}",
-                );
-
-                self.add_columns_to_table_if_not_exists(&collection.collection_name, &rows)
-                    .await
-                    .expect("Failed to add columns to ClickHouse table if not exists");
-
-                log::info!("Inserting copied data into ClickHouse table {collection_name}...",);
-
                 let source_table_info = self
                     .context
                     .tables_map
                     .get(&collection.collection_name)
                     .expect("Table info not found in context");
-
                 let mask_columns = &collection.mask_columns;
 
+                logger.log_progress(processed_rows);
+
+                // 7. Add columns to ClickHouse table if not exists
+                self.add_columns_to_table_if_not_exists(&collection.collection_name, &rows)
+                    .await
+                    .expect("Failed to add columns to ClickHouse table if not exists");
+
+                log::info!(
+                    "Inserting copied data into ClickHouse table {mongodb_collection_name}...",
+                );
+
+                // 8. Do Insert into ClickHouse
                 let insert_query = self.generate_insert_query(
                     &self.clickhouse_config,
                     &source_table_info.clickhouse_columns,
@@ -197,12 +201,12 @@ impl IPipe for MongoDBPipe {
                 }
 
                 processed_rows += rows.len();
-                rows.truncate(0);
+                rows.truncate(0); // Clear the buffer (without deallocating)
             }
 
             logger.clean();
 
-            log::info!("Copy completed for collection {collection_name}");
+            log::info!("Copy completed for collection {mongodb_collection_name}");
         }
     }
 
