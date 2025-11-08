@@ -16,9 +16,15 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Default)]
+pub struct PostgresTableRelation {
+    pub schema_name: String,
+    pub table_name: String,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct PostgresPipeContext {
     tables_map: std::collections::HashMap<String, PostgresPipeTableInfo>,
-    table_relation_map: std::collections::HashMap<u32, (String, String)>,
+    table_relation_map: std::collections::HashMap<u32, PostgresTableRelation>,
 }
 
 impl PostgresPipeContext {
@@ -237,13 +243,13 @@ impl IPipe for PostgresPipe {
             let peek_result = match peek_result {
                 Ok(peek) => peek,
                 Err(e) => {
-                    // 1.1. Handle peek error. wait and retry
+                    // Handle peek error. wait and retry
                     log::error!("Error peeking WAL changes: {e:?}");
                     tokio::time::sleep(std::time::Duration::from_millis(
                         self.config.sleep_millis_when_peek_failed,
                     ))
                     .await;
-                    continue 'SYNC_LOOP;
+                    continue;
                 }
             };
 
@@ -269,8 +275,10 @@ impl IPipe for PostgresPipe {
                     continue;
                 };
 
-                let Some((schema_name, table_name)) =
-                    self.context.table_relation_map.get(&parsed_row.relation_id)
+                let Some(PostgresTableRelation {
+                    schema_name,
+                    table_name,
+                }) = self.context.table_relation_map.get(&parsed_row.relation_id)
                 else {
                     log::warn!(
                         "Relation ID {} not found in context table relation map",
@@ -676,7 +684,10 @@ impl PostgresPipe {
             );
             self.context.table_relation_map.insert(
                 relation_id as u32,
-                (table.schema_name.clone(), table.table_name.clone()),
+                PostgresTableRelation {
+                    schema_name: table.schema_name.clone(),
+                    table_name: table.table_name.clone(),
+                },
             );
         }
 
