@@ -239,7 +239,7 @@ impl IPipe for MongoDBPipe {
                         self.config.sleep_millis_when_peek_failed,
                     ))
                     .await;
-                    continue 'SYNC_LOOP;
+                    continue;
                 }
             };
 
@@ -249,10 +249,10 @@ impl IPipe for MongoDBPipe {
                     self.config.sleep_millis_when_peek_is_empty,
                 ))
                 .await;
-                continue 'SYNC_LOOP;
+                continue;
             }
 
-            // group by collection_name
+            // 2. Group by collection_name for batch insert
             let chunk_iter = peek_result
                 .changes
                 .into_iter()
@@ -263,12 +263,14 @@ impl IPipe for MongoDBPipe {
                 changes_by_collection.insert(collection_name.clone(), group.collect::<Vec<_>>());
             }
 
+            // 2. Group by table and change Clickhouse table schema if needed
             for (collection_name, rows) in &changes_by_collection {
                 let copy_rows = rows
                     .iter()
                     .map(|change| change.to_copy_row().unwrap_or_default())
                     .collect::<Vec<_>>();
 
+                // 2.1. Add columns to ClickHouse table if not exists
                 if let Err(error) = self
                     .add_columns_to_table_if_not_exists(collection_name, &copy_rows)
                     .await
@@ -287,6 +289,7 @@ impl IPipe for MongoDBPipe {
                     continue 'SYNC_LOOP;
                 }
 
+                // 2.2. Reload table info after schema change
                 if let Err(error) = self.load_table_table_info(collection_name).await {
                     log::error!(
                         "Failed to reload table info for ClickHouse table {}: {}",
@@ -308,7 +311,7 @@ impl IPipe for MongoDBPipe {
             let mut batch_insert_queue = HashMap::new();
             let mut batch_delete_queue: HashMap<String, BatchWriteEntry<'_>> = HashMap::new();
 
-            // 2. Parse peeked rows, group by table and prepare for insert/update/delete
+            // 3. Group by table and prepare for insert/update/delete
             for (collection_name, rows) in changes_by_collection {
                 for row in rows {
                     let copy_row = row.to_copy_row().unwrap_or_default();
@@ -374,7 +377,7 @@ impl IPipe for MongoDBPipe {
                 }
             }
 
-            // 3. Insert/Update rows in ClickHouse
+            // 4. Insert/Update rows in ClickHouse
             for (table_name, batch) in batch_insert_queue.iter() {
                 let insert_query = self.generate_insert_query(
                     &self.clickhouse_config,
@@ -407,7 +410,7 @@ impl IPipe for MongoDBPipe {
                 }
             }
 
-            // 4. Delete rows in ClickHouse
+            // 5. Delete rows in ClickHouse
             for (table_name, batch) in batch_delete_queue.iter() {
                 let delete_query = self.generate_delete_query(
                     &self.clickhouse_config,
@@ -439,7 +442,7 @@ impl IPipe for MongoDBPipe {
                 }
             }
 
-            // 5. Move cursor for next peek
+            // 6. Move cursor for next peek
             if let Err(error) = self
                 .mongodb_connection
                 .store_resume_token(&peek_result.resume_token)
@@ -453,7 +456,7 @@ impl IPipe for MongoDBPipe {
                 continue 'SYNC_LOOP;
             }
 
-            // 6. Log the changes
+            // 7. Log the changes
             for (table_name, count) in table_log_map.iter() {
                 log::info!(
                     "Table [{}]: Inserted: {}, Updated: {}, Deleted: {}",
