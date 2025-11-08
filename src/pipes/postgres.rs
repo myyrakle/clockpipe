@@ -16,9 +16,15 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Default)]
+pub struct PostgresTableRelation {
+    pub schema_name: String,
+    pub table_name: String,
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct PostgresPipeContext {
     tables_map: std::collections::HashMap<String, PostgresPipeTableInfo>,
-    table_relation_map: std::collections::HashMap<u32, (String, String)>,
+    table_relation_map: std::collections::HashMap<u32, PostgresTableRelation>,
 }
 
 impl PostgresPipeContext {
@@ -116,10 +122,19 @@ impl IPipe for PostgresPipe {
     async fn first_sync(&self) {
         log::info!("Starting initial sync...");
 
+        // 1. For each table in Postgres config
         for table in &self.postgres_config.tables {
             let schema_name = &table.schema_name;
             let table_name = &table.table_name;
+            let mask_columns = &table.mask_columns;
+            let source_table_info = self
+                .context
+                .tables_map
+                .get(&format!("{schema_name}.{table_name}"))
+                .expect("Table info not found in context");
 
+            // 2. Check if skip_copy is set
+            // If set, skip the initial sync for this table
             if table.skip_copy {
                 log::debug!(
                     "Skipping initial sync for {schema_name}.{table_name} as skip_copy is set to true"
@@ -127,6 +142,8 @@ impl IPipe for PostgresPipe {
                 continue;
             }
 
+            // 3. Check if table is not empty in ClickHouse
+            // If not empty, skip the initial sync for this table
             if self
                 .clickhouse_connection
                 .table_is_not_empty(
@@ -142,19 +159,14 @@ impl IPipe for PostgresPipe {
                 continue;
             }
 
+            // 4. get total row count in Postgres table (for progress logging only)
             let total_count =
                 self.postgres_connection
                     .count_table_rows(schema_name, table_name)
                     .await
                     .expect("Failed to count table rows in Postgres") as usize;
 
-            let logger = ProgressLogger::new(
-                &format!(
-                    "Inserting copied data into ClickHouse table {schema_name}.{table_name}..."
-                ),
-                total_count,
-            );
-
+            // 5. Start copying data from Postgres to ClickHouse
             log::info!(
                 "Copying data from Postgres table {schema_name}.{table_name}... ({total_count} rows)",
             );
@@ -164,16 +176,15 @@ impl IPipe for PostgresPipe {
                 .await
                 .expect("Failed to copy table data from Postgres");
 
-            let source_table_info = self
-                .context
-                .tables_map
-                .get(&format!("{schema_name}.{table_name}"))
-                .expect("Table info not found in context");
-
-            let mask_columns = &table.mask_columns;
-
             let mut processed_rows = 0_usize;
+            let logger = ProgressLogger::new(
+                &format!(
+                    "Inserting copied data into ClickHouse table {schema_name}.{table_name}..."
+                ),
+                total_count,
+            );
 
+            // 6. Receive copied rows in batches and insert into ClickHouse
             let mut rows = Vec::new();
             while let Some(row_chunks) = copy_receiver.recv().await {
                 rows.extend(row_chunks);
@@ -185,12 +196,7 @@ impl IPipe for PostgresPipe {
 
                 logger.log_progress(processed_rows);
 
-                let percent = (processed_rows * 100) / total_count;
-
-                log::debug!(
-                    "Processing chunk {percent}% ({processed_rows}/{total_count}) for table {schema_name}.{table_name}",
-                );
-
+                // 7. Do Insert into ClickHouse
                 let insert_query = self.generate_insert_query(
                     &self.clickhouse_config,
                     &source_table_info.clickhouse_columns,
@@ -237,13 +243,13 @@ impl IPipe for PostgresPipe {
             let peek_result = match peek_result {
                 Ok(peek) => peek,
                 Err(e) => {
-                    // 1.1. Handle peek error. wait and retry
+                    // Handle peek error. wait and retry
                     log::error!("Error peeking WAL changes: {e:?}");
                     tokio::time::sleep(std::time::Duration::from_millis(
                         self.config.sleep_millis_when_peek_failed,
                     ))
                     .await;
-                    continue 'SYNC_LOOP;
+                    continue;
                 }
             };
 
@@ -269,8 +275,10 @@ impl IPipe for PostgresPipe {
                     continue;
                 };
 
-                let Some((schema_name, table_name)) =
-                    self.context.table_relation_map.get(&parsed_row.relation_id)
+                let Some(PostgresTableRelation {
+                    schema_name,
+                    table_name,
+                }) = self.context.table_relation_map.get(&parsed_row.relation_id)
                 else {
                     log::warn!(
                         "Relation ID {} not found in context table relation map",
@@ -676,7 +684,10 @@ impl PostgresPipe {
             );
             self.context.table_relation_map.insert(
                 relation_id as u32,
-                (table.schema_name.clone(), table.table_name.clone()),
+                PostgresTableRelation {
+                    schema_name: table.schema_name.clone(),
+                    table_name: table.table_name.clone(),
+                },
             );
         }
 
