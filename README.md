@@ -1,6 +1,6 @@
 # clockpipe
 
-![](https://img.shields.io/badge/language-Rust-red) ![](https://img.shields.io/badge/version-0.5.3-brightgreen) [![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/myyrakle/clockpipe/blob/master/LICENSE)
+![](https://img.shields.io/badge/language-Rust-red) ![](https://img.shields.io/badge/version-0.5.4-brightgreen) [![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/myyrakle/clockpipe/blob/master/LICENSE)
 
 - Data synchronization pipeline tool for on-premise clickhouse users.
 - Automatically writes data from the original source to Clickhouse. Implemented via CDC.
@@ -32,7 +32,7 @@ cargo install clockpipe
 Using Docker
 
 ```bash
-sudo docker run -v $(pwd)/clockpipe-config.json:/app/config.json --network host myyrakle/clockpipe:v0.5.3
+sudo docker run -v $(pwd)/clockpipe-config.json:/app/config.json --network host myyrakle/clockpipe:v0.5.4
 ```
 
 ## Requirements & Limits
