@@ -222,3 +222,21 @@ pub struct ClickHouseConnectionConfig {
     pub password: String,
     pub database: String,
 }
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MySQLConnectionConfig {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub password: String,
+    pub database: String,
+}
+
+impl MySQLConnectionConfig {
+    pub fn connection_string(&self) -> String {
+        format!(
+            "mysql://{}:{}@{}:{}/{}",
+            self.username, self.password, self.host, self.port, self.database
+        )
+    }
+}

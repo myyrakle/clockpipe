@@ -1,5 +1,6 @@
 pub mod clickhouse;
 pub mod mongodb;
+pub mod mysql;
 pub mod postgres;
 
 use crate::{
