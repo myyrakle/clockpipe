@@ -16,7 +16,28 @@ services:
         limits:
           cpus: "4"
           memory: 8096M
+  cassandradb: 
+    image: cassandra:5
+    environment:
+      CASSANDRA_CLUSTER_NAME: TestCluster
+      CASSANDRA_DC: dc1
+      CASSANDRA_RACK: rack1
+      CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+      CASSANDRA_NUM_TOKENS: 256
+      HEAP_NEWSIZE: 1G
+      MAX_HEAP_SIZE: 4G
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+    ports:
+      - "19042:9042"
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 8096M
 
 volumes:
   clickhouse_data:
     driver: local
+  cassandra_data:
+    driver: local 
