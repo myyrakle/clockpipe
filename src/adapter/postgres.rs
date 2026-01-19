@@ -28,6 +28,30 @@ impl PostgresConnection {
             options = options.password(&config.password);
         }
 
+        // Apply SSL configuration
+        options = match &config.ssl_mode {
+            crate::config::PostgresSslMode::Disable => {
+                options.ssl_mode(sqlx::postgres::PgSslMode::Disable)
+            }
+            crate::config::PostgresSslMode::Prefer => {
+                options.ssl_mode(sqlx::postgres::PgSslMode::Prefer)
+            }
+            crate::config::PostgresSslMode::Require => {
+                options.ssl_mode(sqlx::postgres::PgSslMode::Require)
+            }
+            crate::config::PostgresSslMode::VerifyCa => {
+                options.ssl_mode(sqlx::postgres::PgSslMode::VerifyCa)
+            }
+            crate::config::PostgresSslMode::VerifyFull => {
+                options.ssl_mode(sqlx::postgres::PgSslMode::VerifyFull)
+            }
+        };
+
+        // Apply SSL root certificate if provided
+        if let Some(ssl_root_cert) = &config.ssl_root_cert {
+            options = options.ssl_root_cert(ssl_root_cert);
+        }
+
         let result = sqlx::postgres::PgPoolOptions::new()
             .max_connections(5)
             .connect_with(options)
@@ -137,7 +161,7 @@ impl PostgresConnection {
     ) -> errors::Result<Vec<PostgreColumn>> {
         let result: Vec<PostgreColumn> = sqlx::query_as(
             r#"
-                SELECT 
+                SELECT
                     a.attname AS column_name,
                     pg_catalog.format_type(a.atttypid, a.atttypmod) AS data_type,
                     a.attnotnull AS not_null,
@@ -460,20 +484,20 @@ impl PostgresConnection {
     ) -> errors::Result<String> {
         let result: Vec<(String,)> = sqlx::query_as(
             r#"
-            SELECT 
+            SELECT
                 pd.description as comment
-            FROM 
+            FROM
                 pg_catalog.pg_description pd
-            JOIN 
-                pg_catalog.pg_class pc 
-            ON 
+            JOIN
+                pg_catalog.pg_class pc
+            ON
                 pd.objoid = pc.oid
-            JOIN 
-                pg_catalog.pg_namespace pn 
-            ON 
+            JOIN
+                pg_catalog.pg_namespace pn
+            ON
                 pc.relnamespace = pn.oid
-            WHERE 
-                pc.relname = $1 
+            WHERE
+                pc.relname = $1
                 AND pn.nspname = $2
             "#,
         )
@@ -498,18 +522,18 @@ impl PostgresConnection {
         table_name: &str,
     ) -> errors::Result<Vec<PostgresColumn>> {
         let query = r#"
-             SELECT 
+             SELECT
                 c.ordinal_position as column_index,
                 c.column_name as column_name,
-                c.udt_name as data_type, 
+                c.udt_name as data_type,
                 coalesce(c.character_maximum_length, 0) as length,
                 c.is_nullable = 'YES' as nullable,
                 EXISTS(
                     SELECT 1
-                    FROM 
+                    FROM
                         information_schema.table_constraints tc
-                    JOIN 
-                        information_schema.key_column_usage kcu 
+                    JOIN
+                        information_schema.key_column_usage kcu
                         ON tc.constraint_name = kcu.constraint_name
                         AND tc.table_schema = kcu.table_schema
                     WHERE 1=1
@@ -519,15 +543,15 @@ impl PostgresConnection {
                         AND kcu.column_name = c.column_name
                 ) as is_primary_key,
                 coalesce(pgd.description, '') as comment
-            FROM 
+            FROM
                 information_schema.columns c
-            LEFT JOIN 
-                pg_catalog.pg_description pgd 
+            LEFT JOIN
+                pg_catalog.pg_description pgd
             ON pgd.objsubid = c.ordinal_position
-            AND 
+            AND
                 pgd.objoid = (
-                    SELECT oid 
-                    FROM pg_catalog.pg_class 
+                    SELECT oid
+                    FROM pg_catalog.pg_class
                     WHERE relname = c.table_name
                 )
             WHERE c.table_name = $1 AND c.table_schema = $2
@@ -595,7 +619,7 @@ impl PostgresConnection {
 
         let rows: Vec<PeekWalChangeResult> = sqlx::query_as(
             format!(r#"
-                SELECT lsn::text as lsn, xid::text, data 
+                SELECT lsn::text as lsn, xid::text, data
 		        FROM pg_logical_slot_peek_binary_changes('{replication_slot_name}', NULL, {limit}, 'proto_version', '1', 'publication_names', '{publication_name}')
             "#,
         )

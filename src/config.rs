@@ -182,6 +182,25 @@ pub struct PostgresConnectionConfig {
     pub username: String,
     pub password: String,
     pub database: String,
+    #[serde(default)]
+    pub ssl_mode: PostgresSslMode,
+    #[serde(default)]
+    pub ssl_root_cert: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub enum PostgresSslMode {
+    #[serde(rename = "disable")]
+    #[default]
+    Disable,
+    #[serde(rename = "prefer")]
+    Prefer,
+    #[serde(rename = "require")]
+    Require,
+    #[serde(rename = "verify-ca")]
+    VerifyCa,
+    #[serde(rename = "verify-full")]
+    VerifyFull,
 }
 
 impl PostgresConnectionConfig {

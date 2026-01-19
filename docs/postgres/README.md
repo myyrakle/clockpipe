@@ -64,7 +64,9 @@ sudo systemctl restart postgresql
         "port": 5432,
         "username": "your_user",
         "password": "your_password",
-        "database": "your_database"
+        "database": "your_database",
+        "ssl_mode": "require",
+        "ssl_root_cert": "/path/to/ca-certificate.crt"
       },
       "tables": [
         {
