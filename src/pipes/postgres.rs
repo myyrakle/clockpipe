@@ -224,6 +224,11 @@ impl IPipe for PostgresPipe {
     }
 
     async fn sync_loop(&mut self) {
+        if !self.clickhouse_config.enable_sync_loop() {
+            log::info!("Sync loop disabled. Exiting...");
+            return;
+        }
+
         log::info!("Starting sync loop...");
 
         let publication_name = &self.postgres_config.publication_name;
@@ -481,6 +486,11 @@ impl IPipe for PostgresPipe {
 
 impl PostgresPipe {
     async fn setup_publication(&self) -> Result<(), Errors> {
+        if !self.clickhouse_config.enable_sync_loop() {
+            log::info!("Sync loop disabled. Not setting up publication and replication slot.");
+            return Ok(());
+        }
+
         log::info!("Setup publication and replication slot...");
 
         let publication_name = &self.postgres_config.publication_name;
