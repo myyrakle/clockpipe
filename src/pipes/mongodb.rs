@@ -211,6 +211,11 @@ impl IPipe for MongoDBPipe {
     }
 
     async fn sync_loop(&mut self) {
+        if !self.clickhouse_config.enable_sync_loop() {
+            log::info!("Sync loop disabled. Exiting...");
+            return;
+        }
+
         log::info!("Starting sync loop...");
 
         'SYNC_LOOP: loop {
