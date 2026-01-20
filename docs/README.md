@@ -59,7 +59,7 @@ config example
 | source.mongodb                    | See [The MongoDB Document](./mongodb/README.md)                              | -        |         |
 | target                            | Where to store your data (by default clickhouse)                             | true     |         |
 | target.target_type                | clickhouse                                                                   | true     |         |
-| target.diable_sync_loop           | Disables continuous ynchronization. Only the first copy is processed.        | false    | false   |
+| target.diable_sync_loop           | Disables continuous synchronization. Only the first copy is processed.       | false    | false   |
 | sleep_millis_when_peek_failed     | Wait time when fetching CDC data fails. (ms)                                 | false    | 5000    |
 | sleep_millis_when_peek_is_empty   | Wait time when there are no results from retrieving CDC data. (ms)           | false    | 5000    |
 | sleep_millis_when_write_failed    | Wait time when writing using CDC data fails (ms)                             | false    | 5000    |
