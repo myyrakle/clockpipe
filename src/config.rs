@@ -231,6 +231,14 @@ pub enum TargetType {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ClickHouseConfig {
     pub connection: ClickHouseConnectionConfig,
+    #[serde(default)]
+    pub disable_sync_loop: bool,
+}
+
+impl ClickHouseConfig {
+    pub fn enable_sync_loop(&self) -> bool {
+        !self.disable_sync_loop
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
