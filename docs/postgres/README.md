@@ -48,6 +48,7 @@ sudo systemctl restart postgresql
 - If the accumulated WAL exceeds `max_slot_wal_keep_size`, `wal_status=lost` may occur and the CDC connection may be disconnected. In this case, you will need to remove and recreate the replication_slot, which will result in losing any previously accumulated CDC logs.
 
 ## Caution
+
 - If a column is dropped from an existing table during synchronization, problems may occur. This is because pgoutput will contain the data at that point in time, without any information about the column.
 - If you set max_slot_wal_keep_size to -1, be careful about disk bloat. If replication isn't properly "advanced," data will continue to accumulate in the database.
 
@@ -83,13 +84,14 @@ sudo systemctl restart postgresql
     }
 ```
 
-| name                  | description                                                   | required | default               |
-| :-------------------- | :------------------------------------------------------------ | :------- | :-------------------- |
-| publication_name      | Publication name to use for CDC                               | false    | clockpipe_publication |
-| replication_slot_name | Replication slot name to use for CDC                          | false    | clockpipe_slot        |
-| connection            | PostgreSQL Database Connection Info                           | true     |                       |
-| tables                | tables to sync                                                | true     |                       |
-| tables[].schema_name  | schema name                                                   | true     |                       |
-| tables[].table_name   | table name                                                    | true     |                       |
-| tables[].mask_columns | Masks the values ​​of specific columns to default values      | false    |                       |
-| tables[].skip_copy    | Skip the first copy during initial synchronization (CDC only) | false    | false                 |
+| name                   | description                                                   | required | default               |
+| :--------------------- | :------------------------------------------------------------ | :------- | :-------------------- |
+| publication_name       | Publication name to use for CDC                               | false    | clockpipe_publication |
+| replication_slot_name  | Replication slot name to use for CDC                          | false    | clockpipe_slot        |
+| connection             | PostgreSQL Database Connection Info                           | true     |                       |
+| tables                 | tables to sync                                                | true     |                       |
+| tables[].table_options | table options. [Details](./../clickhouse/README.md)           | false    |                       |
+| tables[].schema_name   | schema name                                                   | true     |                       |
+| tables[].table_name    | table name                                                    | true     |                       |
+| tables[].mask_columns  | Masks the values ​​of specific columns to default values      | false    |                       |
+| tables[].skip_copy     | Skip the first copy during initial synchronization (CDC only) | false    | false                 |

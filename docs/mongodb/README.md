@@ -47,6 +47,7 @@
 | resume_token_path             | (if file) file path of cursor for CDC                         | false    | resume_token.json |
 | connection                    | MongoDB Database Connection Info                              | true     |                   |
 | collections                   | collections to sync                                           | true     |                   |
+| collections[].table_options   | table options. [Details](./../clickhouse/README.md)           | false    |                   |
 | collections[].collection_name | collection name                                               | true     |                   |
 | collections[].mask_columns    | Masks the values ​​of specific columns to default values      | false    |                   |
 | collections[].skip_copy       | Skip the first copy during initial synchronization (CDC only) | false    | false             |
