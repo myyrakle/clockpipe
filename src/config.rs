@@ -90,6 +90,8 @@ pub struct MongoDBSource {
     pub skip_copy: bool,
     #[serde(default)]
     pub mask_columns: Vec<String>,
+    #[serde(default)]
+    pub table_options: ClickHouseTableOptions,
 }
 
 pub mod default {
@@ -220,6 +222,8 @@ pub struct PostgresSource {
     pub skip_copy: bool,
     #[serde(default)]
     pub mask_columns: Vec<String>,
+    #[serde(default)]
+    pub table_options: ClickHouseTableOptions,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -237,6 +241,14 @@ impl Default for ClickHouseTableOptions {
     fn default() -> Self {
         ClickHouseTableOptions {
             storage_policy: None,
+        }
+    }
+}
+
+impl ClickHouseTableOptions {
+    pub fn inherit_from(&mut self, parent: &ClickHouseTableOptions) {
+        if self.storage_policy.is_none() {
+            self.storage_policy = parent.storage_policy.clone();
         }
     }
 }
