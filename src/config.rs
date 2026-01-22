@@ -229,10 +229,25 @@ pub enum TargetType {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ClickHouseTableOptions {
+    pub storage_policy: Option<String>,
+}
+
+impl Default for ClickHouseTableOptions {
+    fn default() -> Self {
+        ClickHouseTableOptions {
+            storage_policy: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ClickHouseConfig {
     pub connection: ClickHouseConnectionConfig,
     #[serde(default)]
     pub disable_sync_loop: bool,
+    #[serde(default)]
+    pub table_options: ClickHouseTableOptions,
 }
 
 impl ClickHouseConfig {
