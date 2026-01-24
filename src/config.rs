@@ -236,6 +236,7 @@ pub enum TargetType {
 pub struct ClickHouseTableOptions {
     pub storage_policy: Option<String>,
     pub granularity: Option<u64>,
+    pub min_age_to_force_merge_seconds: Option<u64>,
 }
 
 impl Default for ClickHouseTableOptions {
@@ -243,6 +244,7 @@ impl Default for ClickHouseTableOptions {
         ClickHouseTableOptions {
             storage_policy: None,
             granularity: None,
+            min_age_to_force_merge_seconds: None,
         }
     }
 }
