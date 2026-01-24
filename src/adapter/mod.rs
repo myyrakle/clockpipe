@@ -89,7 +89,10 @@ pub trait IntoClickhouse {
         }
 
         query.push_str("SETTINGS\n");
-        query.push_str(format!("index_granularity = {INDEX_GRANULARITY}\n",).as_str());
+
+        let granularity = table_options.granularity.unwrap_or(INDEX_GRANULARITY);
+        query.push_str(format!("index_granularity = {granularity}\n",).as_str());
+
         query.push_str(
             format!(", min_age_to_force_merge_seconds = {MIN_AGE_TO_FORCE_MERGE_SECONDS}\n",)
                 .as_str(),
