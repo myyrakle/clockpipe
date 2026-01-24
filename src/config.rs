@@ -235,12 +235,14 @@ pub enum TargetType {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ClickHouseTableOptions {
     pub storage_policy: Option<String>,
+    pub granularity: Option<u64>,
 }
 
 impl Default for ClickHouseTableOptions {
     fn default() -> Self {
         ClickHouseTableOptions {
             storage_policy: None,
+            granularity: None,
         }
     }
 }
@@ -249,6 +251,10 @@ impl ClickHouseTableOptions {
     pub fn inherit_from(&mut self, parent: &ClickHouseTableOptions) {
         if self.storage_policy.is_none() {
             self.storage_policy = parent.storage_policy.clone();
+        }
+
+        if self.granularity.is_none() {
+            self.granularity = parent.granularity;
         }
     }
 }
