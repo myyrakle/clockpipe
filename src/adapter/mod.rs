@@ -5,7 +5,7 @@ pub mod postgres;
 use crate::{
     adapter::clickhouse::{ClickhouseColumn, ClickhouseType},
     config::{
-        ClickHouseConfig,
+        ClickHouseConfig, ClickHouseTableOptions,
         default::clickhouse::{INDEX_GRANULARITY, MIN_AGE_TO_FORCE_MERGE_SECONDS},
     },
 };
@@ -49,11 +49,14 @@ pub trait IntoClickhouseValue {
 pub trait IntoClickhouse {
     fn generate_create_table_query(
         &self,
-        database_name: &str,
+        clickhouse_config: &ClickHouseConfig,
+        table_options: &ClickHouseTableOptions,
         table_name: &str,
         columns: &[impl IntoClickhouseColumn],
         comment: &str,
     ) -> String {
+        let database_name = &clickhouse_config.connection.database;
+
         let mut query = format!("CREATE TABLE {database_name}.{table_name}");
         query.push('(');
 
@@ -84,12 +87,23 @@ pub trait IntoClickhouse {
         if !primary_keys.is_empty() {
             query.push_str(format!("ORDER BY ({primary_keys})\n").as_str());
         }
+
         query.push_str("SETTINGS\n");
         query.push_str(format!("index_granularity = {INDEX_GRANULARITY}\n",).as_str());
         query.push_str(
             format!(", min_age_to_force_merge_seconds = {MIN_AGE_TO_FORCE_MERGE_SECONDS}\n",)
                 .as_str(),
         );
+
+        if let Some(storage_policy) = &table_options.storage_policy {
+            query.push_str(
+                format!(
+                    ", storage_policy = '{}'\n",
+                    storage_policy.replace("'", "''")
+                )
+                .as_str(),
+            );
+        }
 
         query.push_str(format!("COMMENT '{}'\n", comment.replace("'", "''")).as_str());
 

@@ -607,8 +607,13 @@ impl PostgresPipe {
                     table.schema_name,
                     table.table_name
                 );
+
+                let mut table_options = table.table_options.clone();
+                table_options.inherit_from(&self.clickhouse_config.table_options);
+
                 let create_table_query = self.generate_create_table_query(
-                    &self.clickhouse_config.connection.database,
+                    &self.clickhouse_config,
+                    &table_options,
                     &table.table_name,
                     &postgres_columns,
                     &table_comment,

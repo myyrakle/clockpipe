@@ -33,6 +33,8 @@ async fn main() {
                 .read_config_from_file()
                 .expect("Failed to read configuration");
 
+            log::debug!("Configuration: {:#?}", config);
+
             match config.source.source_type {
                 config::SourceType::Postgres => {
                     log::info!("Start Postgres pipe");

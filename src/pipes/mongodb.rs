@@ -503,8 +503,12 @@ impl MongoDBPipe {
                     collection.collection_name
                 );
 
+                let mut table_options = collection.table_options.clone();
+                table_options.inherit_from(&self.clickhouse_config.table_options);
+
                 let create_table_query = self.generate_create_table_query(
-                    &self.clickhouse_config.connection.database,
+                    &self.clickhouse_config,
+                    &table_options,
                     &collection.collection_name,
                     &[MongoDBColumn {
                         column_name: "_id".to_string(),
