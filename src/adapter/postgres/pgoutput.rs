@@ -190,7 +190,12 @@ impl PgOutputValue {
     }
 
     pub fn escape_string(input: &str) -> String {
-        input.replace('\'', "''").replace("\\", "\\\\")
+        input
+            .replace('\'', "''")
+            .replace("\\", "\\\\")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r")
+            .replace('\0', "\\0")
     }
 
     /*

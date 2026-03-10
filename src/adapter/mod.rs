@@ -171,6 +171,10 @@ pub trait IntoClickhouse {
             let mut value = vec![];
 
             for clickhouse_column in columns.iter() {
+                if clickhouse_column.column_name == "origin_content" {
+                    println!("!!! Processing column: {}", clickhouse_column.column_name);
+                }
+
                 let raw_value =
                     row.find_value_by_column_name(source_columns, &clickhouse_column.column_name);
 
@@ -181,6 +185,10 @@ pub trait IntoClickhouse {
                 }
 
                 let column_value = clickhouse_column.to_clickhouse_value(raw_value);
+
+                if clickhouse_column.column_name == "origin_content" {
+                    println!("!!! Column value: {}", column_value.to_string());
+                }
 
                 value.push(column_value);
             }
