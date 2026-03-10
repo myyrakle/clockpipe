@@ -26,6 +26,8 @@ pub trait IntoClickhouseRow {
         source_columns: &[impl IntoClickhouseColumn],
         column_name: &str,
     ) -> Option<impl IntoClickhouseValue + Default>;
+
+    fn debug_all(&self);
 }
 
 /// Trait for converting each source value to Clickhouse value representation

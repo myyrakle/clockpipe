@@ -79,11 +79,21 @@ pub enum PgOutputValue {
 
 impl IntoClickhouseValue for PgOutputValue {
     fn to_integer(self) -> String {
-        self.text_or("0".to_string())
+        let text = self.text_or("0".to_string());
+        if text.trim().parse::<i64>().is_ok() || text.trim().parse::<u64>().is_ok() {
+            text
+        } else {
+            "0".to_string()
+        }
     }
 
     fn to_real(self) -> String {
-        self.text_or("0.0".to_string())
+        let text = self.text_or("0.0".to_string());
+        if text.trim().parse::<f64>().is_ok() {
+            text
+        } else {
+            "0.0".to_string()
+        }
     }
 
     fn to_bool(self) -> String {

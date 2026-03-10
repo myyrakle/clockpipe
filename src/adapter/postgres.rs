@@ -350,6 +350,12 @@ impl IntoClickhouseRow for PostgresCopyRow {
 
         postgres_raw_column_value.map(ToOwned::to_owned)
     }
+
+    fn debug_all(&self) {
+        for (index, column_value) in self.columns.iter().enumerate() {
+            println!("Column index: {}, Value: {:?}", index + 1, column_value);
+        }
+    }
 }
 
 impl PostgresConnection {
