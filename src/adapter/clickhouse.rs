@@ -148,6 +148,8 @@ impl ClickhouseColumn {
                     value.to_datetime()
                 } else if self.data_type.contains("Time") {
                     value.to_time()
+                } else if self.data_type.contains("String") {
+                    value.to_string()
                 } else {
                     value.unknown_value()
                 }

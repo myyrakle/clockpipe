@@ -593,4 +593,13 @@ impl IntoClickhouseRow for MongoDBCopyRow {
 
         None
     }
+
+    fn debug_all(&self) {
+        for column in &self.columns {
+            println!(
+                "Column: {}, Value: {:?}",
+                column.column_name, column.bson_value
+            );
+        }
+    }
 }
