@@ -134,7 +134,7 @@ impl IntoClickhouseValue for PgOutputValue {
     }
 
     fn unknown_value(self) -> String {
-        self.text_or("NULL".to_string())
+        format!("'{}'", Self::escape_string(&self.text_or("".to_string())))
     }
 
     fn into_null(self) -> Self {
