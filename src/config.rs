@@ -81,6 +81,8 @@ pub struct MongoDBConnectionConfig {
     pub username: String,
     pub password: String,
     pub database: String,
+    #[serde(default = "default::mongodb::app_name")]
+    pub app_name: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -133,6 +135,11 @@ pub mod default {
         pub const PEEK_TIMEOUT_MILLIS: u64 = 5000;
         pub fn peek_timeout_millis() -> u64 {
             PEEK_TIMEOUT_MILLIS
+        }
+
+        pub const APP_NAME: &str = "clockpipe";
+        pub fn app_name() -> String {
+            APP_NAME.to_string()
         }
     }
 

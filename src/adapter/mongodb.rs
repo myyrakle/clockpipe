@@ -54,6 +54,7 @@ impl MongoDBConnection {
 
         let server_api = ServerApi::builder().version(ServerApiVersion::V1).build();
         client_options.server_api = Some(server_api);
+        client_options.app_name = Some(connection_config.app_name.clone());
 
         let client = Client::with_options(client_options).map_err(|e| {
             errors::Errors::DatabaseConnectionError(format!("Failed to create MongoDB client: {e}"))
