@@ -204,9 +204,41 @@ impl IPipe for MongoDBPipe {
                 rows.truncate(0); // Clear the buffer (without deallocating)
             }
 
+            // Flush remaining rows that didn't reach the batch threshold
+            if !rows.is_empty() {
+                let source_table_info = self
+                    .context
+                    .tables_map
+                    .get(&collection.collection_name)
+                    .expect("Table info not found in context");
+                let mask_columns = &collection.mask_columns;
+
+                self.add_columns_to_table_if_not_exists(&collection.collection_name, &rows)
+                    .await
+                    .expect("Failed to add columns to ClickHouse table if not exists");
+
+                let insert_query = self.generate_insert_query(
+                    &self.clickhouse_config,
+                    &source_table_info.clickhouse_columns,
+                    &Vec::<MongoDBColumn>::new(),
+                    mask_columns,
+                    &collection.collection_name,
+                    &rows,
+                );
+
+                if !insert_query.is_empty() {
+                    self.clickhouse_connection
+                        .execute_query(&insert_query)
+                        .await
+                        .expect("Failed to execute insert query in ClickHouse");
+                }
+
+                processed_rows += rows.len();
+            }
+
             logger.clean();
 
-            log::info!("Copy completed for collection {mongodb_collection_name}");
+            log::info!("Copy completed for collection {mongodb_collection_name} ({processed_rows} rows)");
         }
     }
 
