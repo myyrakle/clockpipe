@@ -217,6 +217,27 @@ impl IPipe for PostgresPipe {
                 rows.clear();
             }
 
+            // Flush remaining rows that didn't reach the batch threshold
+            if !rows.is_empty() {
+                let insert_query = self.generate_insert_query(
+                    &self.clickhouse_config,
+                    &source_table_info.clickhouse_columns,
+                    &source_table_info.postgres_columns,
+                    mask_columns,
+                    &table.table_name,
+                    &rows,
+                );
+
+                if !insert_query.is_empty() {
+                    self.clickhouse_connection
+                        .execute_query(&insert_query)
+                        .await
+                        .expect("Failed to execute insert query in ClickHouse");
+                }
+
+                processed_rows += rows.len();
+            }
+
             logger.clean();
 
             log::info!("Copy completed for table {schema_name}.{table_name}");
