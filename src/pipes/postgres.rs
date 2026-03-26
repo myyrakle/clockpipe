@@ -240,7 +240,9 @@ impl IPipe for PostgresPipe {
 
             logger.clean();
 
-            log::info!("Copy completed for table {schema_name}.{table_name}");
+            log::info!(
+                "Copy completed for table {schema_name}.{table_name} ({processed_rows} rows)"
+            );
         }
     }
 
