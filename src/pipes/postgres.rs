@@ -297,10 +297,20 @@ impl IPipe for PostgresPipe {
 
             // 2. Parse peeked rows, group by table and prepare for insert/update/delete
             for row in peek_result.iter() {
-                let Some(parsed_row) =
-                    parse_pg_output(&row.data).expect("Failed to parse PgOutput")
-                else {
-                    continue;
+                let parsed_row = match parse_pg_output(&row.data) {
+                    Ok(Some(parsed)) => parsed,
+                    Ok(None) => continue,
+                    Err(e) => {
+                        log::error!(
+                            "Failed to parse PgOutput: {e:?}. Raw data (hex): {}",
+                            row.data
+                                .iter()
+                                .map(|b| format!("{b:02x}"))
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        );
+                        panic!("Aborting due to PgOutput parse failure");
+                    }
                 };
 
                 let Some(PostgresTableRelation {
