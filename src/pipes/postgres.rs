@@ -427,7 +427,7 @@ impl IPipe for PostgresPipe {
                     &batch.table_info.postgres_columns,
                     &batch.mask_columns,
                     table_name,
-                    &batch.rows,
+                    &batch.deduplicated_rows(),
                 );
 
                 if !insert_query.is_empty() {
@@ -778,4 +778,25 @@ impl BatchWriteEntry<'_> {
     pub fn push(&mut self, row: PostgresCopyRow) {
         self.rows.push(row);
     }
+
+    pub fn deduplicated_rows(&self) -> Vec<PostgresCopyRow> {
+        adapter::deduplicate_rows_keeping_last(self.rows.clone(), |row| {
+            extract_postgres_primary_key(row, &self.table_info.postgres_columns)
+        })
+    }
+}
+
+fn extract_postgres_primary_key(row: &PostgresCopyRow, columns: &[PostgresColumn]) -> String {
+    columns
+        .iter()
+        .filter(|col| col.is_primary_key)
+        .map(|col| {
+            let index = (col.column_index - 1) as usize;
+            match row.columns.get(index) {
+                Some(value) => format!("{value:?}"),
+                None => "NULL".to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("|")
 }
