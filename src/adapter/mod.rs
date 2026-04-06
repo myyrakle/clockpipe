@@ -2,6 +2,8 @@ pub mod clickhouse;
 pub mod mongodb;
 pub mod postgres;
 
+use std::collections::HashSet;
+
 use crate::{
     adapter::clickhouse::{ClickhouseColumn, ClickhouseType},
     config::{
@@ -251,4 +253,17 @@ pub trait IntoClickhouse {
 
         delete_query
     }
+}
+
+/// Deduplicates rows by a key derived from each row, keeping the last occurrence per key.
+/// The relative order of first-seen keys is preserved.
+pub fn deduplicate_rows_keeping_last<T>(rows: Vec<T>, key_fn: impl Fn(&T) -> String) -> Vec<T> {
+    let mut seen = HashSet::new();
+    let mut result: Vec<T> = rows
+        .into_iter()
+        .rev()
+        .filter(|row| seen.insert(key_fn(row)))
+        .collect();
+    result.reverse();
+    result
 }

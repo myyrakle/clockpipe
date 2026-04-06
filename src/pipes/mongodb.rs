@@ -422,7 +422,7 @@ impl IPipe for MongoDBPipe {
                     &Vec::<MongoDBColumn>::new(), // MongoDB does not have a fixed schema, so we pass an empty slice here
                     &batch.mask_columns,
                     table_name,
-                    &batch.rows,
+                    &batch.deduplicated_rows(),
                 );
 
                 if !insert_query.is_empty() {
@@ -681,4 +681,16 @@ impl BatchWriteEntry<'_> {
     pub fn push(&mut self, row: MongoDBCopyRow) {
         self.rows.push(row);
     }
+
+    pub fn deduplicated_rows(&self) -> Vec<MongoDBCopyRow> {
+        adapter::deduplicate_rows_keeping_last(self.rows.clone(), extract_mongodb_primary_key)
+    }
+}
+
+fn extract_mongodb_primary_key(row: &MongoDBCopyRow) -> String {
+    row.columns
+        .iter()
+        .find(|col| col.column_name == "_id")
+        .map(|col| format!("{:?}", col.bson_value))
+        .unwrap_or_default()
 }
