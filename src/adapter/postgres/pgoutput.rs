@@ -267,6 +267,51 @@ pub fn parse_pg_output(bytes: &[u8]) -> errors::Result<Option<PgOutput>> {
     }
 }
 
+fn skip_tuple(cursor: &mut std::io::Cursor<&[u8]>) -> errors::Result<()> {
+    let column_count = cursor.read_u16::<byteorder::BigEndian>().map_err(|e| {
+        errors::Errors::PgOutputParseError(format!(
+            "Failed to read column count while skipping tuple: {e}"
+        ))
+    })? as usize;
+
+    for _ in 0..column_count {
+        let column_type = cursor.read_u8().map_err(|e| {
+            errors::Errors::PgOutputParseError(format!(
+                "Failed to read column type while skipping tuple: {e}"
+            ))
+        })?;
+
+        match column_type {
+            b'n' | b'u' => {
+                // NULL or UNCHANGED - no data follows
+            }
+            b't' | b'b' => {
+                // Text or Binary - read and discard
+                let length = cursor.read_u32::<byteorder::BigEndian>().map_err(|e| {
+                    errors::Errors::PgOutputParseError(format!(
+                        "Failed to read length while skipping tuple: {e}"
+                    ))
+                })? as usize;
+
+                let mut buffer = vec![0u8; length];
+                cursor.read_exact(&mut buffer).map_err(|e| {
+                    errors::Errors::PgOutputParseError(format!(
+                        "Failed to skip bytes in tuple: {e}"
+                    ))
+                })?;
+            }
+            _ => {
+                return Err(errors::Errors::PgOutputParseError(format!(
+                    "Unknown column type while skipping tuple: 0x{:02x}",
+                    column_type
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn parse_pg_output_write(message_type: MessageType, bytes: &[u8]) -> errors::Result<PgOutput> {
     let mut cursor = std::io::Cursor::new(&bytes[1..]); // Skip the first byte (message type)
 
@@ -300,13 +345,33 @@ fn parse_pg_output_write(message_type: MessageType, bytes: &[u8]) -> errors::Res
             })?;
 
             // Update: relation_id + ('K'|'O'|'N') + tuple_data
+            // If 'K' or 'O' (old tuple), skip it and read the following 'N' (new tuple)
             let tuple_type_byte = cursor.read_u8().map_err(|e| {
                 errors::Errors::PgOutputParseError(format!("Failed to read tuple type: {e}"))
             })?;
 
-            pg_output.tuple_type = Some(PgTupleType::try_from(tuple_type_byte).map_err(|e| {
+            let tuple_type = PgTupleType::try_from(tuple_type_byte).map_err(|e| {
                 errors::Errors::PgOutputParseError(format!("Invalid tuple type: {e}"))
-            })?);
+            })?;
+
+            if tuple_type == PgTupleType::Key || tuple_type == PgTupleType::Old {
+                // Skip old tuple data
+                skip_tuple(&mut cursor)?;
+
+                // Read 'N' marker for new tuple
+                let new_tuple_type_byte = cursor.read_u8().map_err(|e| {
+                    errors::Errors::PgOutputParseError(format!(
+                        "Failed to read new tuple type after old tuple: {e}"
+                    ))
+                })?;
+
+                pg_output.tuple_type =
+                    Some(PgTupleType::try_from(new_tuple_type_byte).map_err(|e| {
+                        errors::Errors::PgOutputParseError(format!("Invalid new tuple type: {e}"))
+                    })?);
+            } else {
+                pg_output.tuple_type = Some(tuple_type);
+            }
         }
         MessageType::Delete => {
             // Read relation ID (4 bytes)
