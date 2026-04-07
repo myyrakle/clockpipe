@@ -1,4 +1,4 @@
-use std::io::{Read, Seek, SeekFrom};
+use std::io::Read;
 
 use byteorder::ReadBytesExt;
 use serde::{Deserialize, Serialize};
@@ -65,6 +65,7 @@ pub struct PgOutput {
     pub relation_id: u32,
     pub tuple_type: Option<PgTupleType>,
     pub payload: Vec<PgOutputValue>,
+    pub old_values: Option<Vec<PgOutputValue>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -267,48 +268,75 @@ pub fn parse_pg_output(bytes: &[u8]) -> errors::Result<Option<PgOutput>> {
     }
 }
 
-fn skip_tuple(cursor: &mut std::io::Cursor<&[u8]>) -> errors::Result<()> {
+fn read_tuple(cursor: &mut std::io::Cursor<&[u8]>) -> errors::Result<Vec<PgOutputValue>> {
     let column_count = cursor.read_u16::<byteorder::BigEndian>().map_err(|e| {
         errors::Errors::PgOutputParseError(format!(
-            "Failed to read column count while skipping tuple: {e}"
+            "Failed to read column count while reading tuple: {e}"
         ))
     })? as usize;
+
+    let mut values = Vec::with_capacity(column_count);
 
     for _ in 0..column_count {
         let column_type = cursor.read_u8().map_err(|e| {
             errors::Errors::PgOutputParseError(format!(
-                "Failed to read column type while skipping tuple: {e}"
+                "Failed to read column type while reading tuple: {e}"
             ))
         })?;
 
         match column_type {
-            b'n' | b'u' => {
-                // NULL or UNCHANGED - no data follows
+            b'n' => {
+                values.push(PgOutputValue::Null);
             }
-            b't' | b'b' => {
-                // Text or Binary - seek past without allocating
+            b'u' => {
+                values.push(PgOutputValue::Unchanged);
+            }
+            b't' => {
                 let length = cursor.read_u32::<byteorder::BigEndian>().map_err(|e| {
                     errors::Errors::PgOutputParseError(format!(
-                        "Failed to read length while skipping tuple: {e}"
+                        "Failed to read length while reading tuple: {e}"
                     ))
-                })? as i64;
+                })? as usize;
 
-                cursor.seek(SeekFrom::Current(length)).map_err(|e| {
+                let mut buffer = vec![0u8; length];
+                cursor.read_exact(&mut buffer).map_err(|e| {
                     errors::Errors::PgOutputParseError(format!(
-                        "Failed to seek while skipping tuple bytes: {e}"
+                        "Failed to read text value in tuple: {e}"
                     ))
                 })?;
+
+                let text_value = String::from_utf8(buffer).map_err(|e| {
+                    errors::Errors::PgOutputParseError(format!("Invalid UTF-8 in tuple: {e}"))
+                })?;
+
+                values.push(PgOutputValue::Text(text_value));
+            }
+            b'b' => {
+                let length = cursor.read_u32::<byteorder::BigEndian>().map_err(|e| {
+                    errors::Errors::PgOutputParseError(format!(
+                        "Failed to read length while reading tuple: {e}"
+                    ))
+                })? as usize;
+
+                let mut buffer = vec![0u8; length];
+                cursor.read_exact(&mut buffer).map_err(|e| {
+                    errors::Errors::PgOutputParseError(format!(
+                        "Failed to read binary value in tuple: {e}"
+                    ))
+                })?;
+
+                values.push(PgOutputValue::Binary(buffer));
             }
             _ => {
                 return Err(errors::Errors::PgOutputParseError(format!(
-                    "Unknown column type while skipping tuple: 0x{:02x}",
+                    "Unknown column type while reading tuple: 0x{:02x}",
                     column_type
                 )));
             }
         }
     }
 
-    Ok(())
+    Ok(values)
 }
 
 fn parse_pg_output_write(message_type: MessageType, bytes: &[u8]) -> errors::Result<PgOutput> {
@@ -319,6 +347,7 @@ fn parse_pg_output_write(message_type: MessageType, bytes: &[u8]) -> errors::Res
         relation_id: 0,
         tuple_type: None,
         payload: Vec::new(),
+        old_values: None,
     };
 
     match message_type {
@@ -354,8 +383,8 @@ fn parse_pg_output_write(message_type: MessageType, bytes: &[u8]) -> errors::Res
             })?;
 
             if tuple_type == PgTupleType::Key || tuple_type == PgTupleType::Old {
-                // Skip old tuple data
-                skip_tuple(&mut cursor)?;
+                // Read old tuple to use as fallback for Unchanged columns
+                let old_values = read_tuple(&mut cursor)?;
 
                 // Read 'N' marker for new tuple
                 let new_tuple_type_byte = cursor.read_u8().map_err(|e| {
@@ -373,6 +402,7 @@ fn parse_pg_output_write(message_type: MessageType, bytes: &[u8]) -> errors::Res
                     )));
                 }
                 pg_output.tuple_type = Some(new_tuple_type);
+                pg_output.old_values = Some(old_values);
             } else {
                 pg_output.tuple_type = Some(tuple_type);
             }
@@ -480,6 +510,17 @@ fn parse_pg_output_write(message_type: MessageType, bytes: &[u8]) -> errors::Res
                     "Unknown column type: {} (0x{:02x})",
                     column_type as char, column_type
                 )));
+            }
+        }
+    }
+
+    // Fill Unchanged columns from old_values (TOAST fallback)
+    if let Some(old_values) = &pg_output.old_values {
+        for (i, value) in pg_output.payload.iter_mut().enumerate() {
+            if matches!(value, PgOutputValue::Unchanged) {
+                if let Some(old_value) = old_values.get(i) {
+                    *value = old_value.clone();
+                }
             }
         }
     }
