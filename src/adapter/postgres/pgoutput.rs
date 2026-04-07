@@ -364,10 +364,15 @@ fn parse_pg_output_write(message_type: MessageType, bytes: &[u8]) -> errors::Res
                     ))
                 })?;
 
-                pg_output.tuple_type =
-                    Some(PgTupleType::try_from(new_tuple_type_byte).map_err(|e| {
-                        errors::Errors::PgOutputParseError(format!("Invalid new tuple type: {e}"))
-                    })?);
+                let new_tuple_type = PgTupleType::try_from(new_tuple_type_byte).map_err(|e| {
+                    errors::Errors::PgOutputParseError(format!("Invalid new tuple type: {e}"))
+                })?;
+                if new_tuple_type != PgTupleType::New {
+                    return Err(errors::Errors::PgOutputParseError(format!(
+                        "Expected 'N' tuple after old tuple in UPDATE, got: 0x{new_tuple_type_byte:02x}"
+                    )));
+                }
+                pg_output.tuple_type = Some(new_tuple_type);
             } else {
                 pg_output.tuple_type = Some(tuple_type);
             }
