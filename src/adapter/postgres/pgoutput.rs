@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 
 use byteorder::ReadBytesExt;
 use serde::{Deserialize, Serialize};
@@ -286,17 +286,16 @@ fn skip_tuple(cursor: &mut std::io::Cursor<&[u8]>) -> errors::Result<()> {
                 // NULL or UNCHANGED - no data follows
             }
             b't' | b'b' => {
-                // Text or Binary - read and discard
+                // Text or Binary - seek past without allocating
                 let length = cursor.read_u32::<byteorder::BigEndian>().map_err(|e| {
                     errors::Errors::PgOutputParseError(format!(
                         "Failed to read length while skipping tuple: {e}"
                     ))
-                })? as usize;
+                })? as i64;
 
-                let mut buffer = vec![0u8; length];
-                cursor.read_exact(&mut buffer).map_err(|e| {
+                cursor.seek(SeekFrom::Current(length)).map_err(|e| {
                     errors::Errors::PgOutputParseError(format!(
-                        "Failed to skip bytes in tuple: {e}"
+                        "Failed to seek while skipping tuple bytes: {e}"
                     ))
                 })?;
             }
