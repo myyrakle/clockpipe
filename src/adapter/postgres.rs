@@ -371,13 +371,15 @@ impl PostgresConnection {
     }
 
     fn decode_copy_text_field(input: &str) -> String {
-        let mut decoded = String::with_capacity(input.len());
+        let mut decoded = Vec::with_capacity(input.len());
         let chars: Vec<char> = input.chars().collect();
         let mut index = 0;
 
         while index < chars.len() {
             if chars[index] != '\\' {
-                decoded.push(chars[index]);
+                let mut buffer = [0u8; 4];
+                let encoded = chars[index].encode_utf8(&mut buffer);
+                decoded.extend_from_slice(encoded.as_bytes());
                 index += 1;
                 continue;
             }
@@ -385,37 +387,37 @@ impl PostgresConnection {
             index += 1;
 
             if index >= chars.len() {
-                decoded.push('\\');
+                decoded.push(b'\\');
                 break;
             }
 
             match chars[index] {
                 'b' => {
-                    decoded.push('\u{0008}');
+                    decoded.push(0x08);
                     index += 1;
                 }
                 'f' => {
-                    decoded.push('\u{000C}');
+                    decoded.push(0x0C);
                     index += 1;
                 }
                 'n' => {
-                    decoded.push('\n');
+                    decoded.push(b'\n');
                     index += 1;
                 }
                 'r' => {
-                    decoded.push('\r');
+                    decoded.push(b'\r');
                     index += 1;
                 }
                 't' => {
-                    decoded.push('\t');
+                    decoded.push(b'\t');
                     index += 1;
                 }
                 'v' => {
-                    decoded.push('\u{000B}');
+                    decoded.push(0x0B);
                     index += 1;
                 }
                 '\\' => {
-                    decoded.push('\\');
+                    decoded.push(b'\\');
                     index += 1;
                 }
                 'x' => {
@@ -430,13 +432,13 @@ impl PostgresConnection {
                     if hex_end > index + 1 {
                         let hex: String = chars[index + 1..hex_end].iter().collect();
                         if let Ok(value) = u8::from_str_radix(&hex, 16) {
-                            decoded.push(value as char);
+                            decoded.push(value);
                             index = hex_end;
                             continue;
                         }
                     }
 
-                    decoded.push('x');
+                    decoded.push(b'x');
                     index += 1;
                 }
                 '0'..='7' => {
@@ -451,21 +453,26 @@ impl PostgresConnection {
                     let octal: String = chars[start..octal_end].iter().collect();
 
                     if let Ok(value) = u8::from_str_radix(&octal, 8) {
-                        decoded.push(value as char);
+                        decoded.push(value);
                         index = octal_end;
                     } else {
-                        decoded.push(chars[index]);
+                        let mut buffer = [0u8; 4];
+                        let encoded = chars[index].encode_utf8(&mut buffer);
+                        decoded.extend_from_slice(encoded.as_bytes());
                         index += 1;
                     }
                 }
                 other => {
-                    decoded.push(other);
+                    let mut buffer = [0u8; 4];
+                    let encoded = other.encode_utf8(&mut buffer);
+                    decoded.extend_from_slice(encoded.as_bytes());
                     index += 1;
                 }
             }
         }
 
-        decoded
+        String::from_utf8(decoded)
+            .unwrap_or_else(|error| String::from_utf8_lossy(&error.into_bytes()).into_owned())
     }
 
     #[cfg(test)]
@@ -934,6 +941,76 @@ mod tests {
         input.to_string()
     }
 
+    fn decode_copy_text_field_before_utf8_byte_fix(input: &str) -> String {
+        let mut decoded = String::with_capacity(input.len());
+        let chars: Vec<char> = input.chars().collect();
+        let mut index = 0;
+
+        while index < chars.len() {
+            if chars[index] != '\\' {
+                decoded.push(chars[index]);
+                index += 1;
+                continue;
+            }
+
+            index += 1;
+
+            if index >= chars.len() {
+                decoded.push('\\');
+                break;
+            }
+
+            match chars[index] {
+                'x' => {
+                    let end = usize::min(index + 3, chars.len());
+                    let hex_end = chars[index + 1..end]
+                        .iter()
+                        .take_while(|c| c.is_ascii_hexdigit())
+                        .count()
+                        + index
+                        + 1;
+
+                    if hex_end > index + 1 {
+                        let hex: String = chars[index + 1..hex_end].iter().collect();
+                        if let Ok(value) = u8::from_str_radix(&hex, 16) {
+                            decoded.push(value as char);
+                            index = hex_end;
+                            continue;
+                        }
+                    }
+
+                    decoded.push('x');
+                    index += 1;
+                }
+                '0'..='7' => {
+                    let start = index;
+                    let end = usize::min(index + 3, chars.len());
+                    let octal_end = chars[start..end]
+                        .iter()
+                        .take_while(|c| matches!(c, '0'..='7'))
+                        .count()
+                        + start;
+
+                    let octal: String = chars[start..octal_end].iter().collect();
+
+                    if let Ok(value) = u8::from_str_radix(&octal, 8) {
+                        decoded.push(value as char);
+                        index = octal_end;
+                    } else {
+                        decoded.push(chars[index]);
+                        index += 1;
+                    }
+                }
+                other => {
+                    decoded.push(other);
+                    index += 1;
+                }
+            }
+        }
+
+        decoded
+    }
+
     #[test]
     fn decode_copy_text_field_before_and_after_json_escape_sequences() {
         let raw = r#"{"style_summary":"типа \\\"треугольник\\\""}"#;
@@ -975,6 +1052,28 @@ mod tests {
 
         assert_eq!(before, r#"prefix\x41suffix"#);
         assert_eq!(after, "prefixAsuffix");
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn decode_copy_text_field_restores_utf8_multibyte_hex_escape() {
+        let raw = r#"\xC3\xA9"#;
+        let before = decode_copy_text_field_before_utf8_byte_fix(raw);
+        let after = PostgresConnection::decode_copy_text_field(raw);
+
+        assert_eq!(before, "Ã©");
+        assert_eq!(after, "é");
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn decode_copy_text_field_restores_utf8_multibyte_octal_escape() {
+        let raw = r#"\303\251"#;
+        let before = decode_copy_text_field_before_utf8_byte_fix(raw);
+        let after = PostgresConnection::decode_copy_text_field(raw);
+
+        assert_eq!(before, "Ã©");
+        assert_eq!(after, "é");
         assert_ne!(before, after);
     }
 
