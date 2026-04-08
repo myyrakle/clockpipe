@@ -238,7 +238,9 @@ impl IPipe for MongoDBPipe {
 
             logger.clean();
 
-            log::info!("Copy completed for collection {mongodb_collection_name} ({processed_rows} rows)");
+            log::info!(
+                "Copy completed for collection {mongodb_collection_name} ({processed_rows} rows)"
+            );
         }
     }
 

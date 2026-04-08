@@ -40,11 +40,9 @@ pub mod run {
                     );
                     Ok(config)
                 }
-                Err(error) => {
-                    Err(errors::Errors::ConfigReadError(format!(
-                        "Failed to parse configuration file: {error}"
-                    )))
-                }
+                Err(error) => Err(errors::Errors::ConfigReadError(format!(
+                    "Failed to parse configuration file: {error}"
+                ))),
             }
         }
     }
