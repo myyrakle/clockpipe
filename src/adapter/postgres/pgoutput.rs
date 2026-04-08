@@ -520,7 +520,32 @@ fn parse_pg_output_write(message_type: MessageType, bytes: &[u8]) -> errors::Res
             if matches!(value, PgOutputValue::Unchanged) {
                 if let Some(old_value) = old_values.get(i) {
                     *value = old_value.clone();
+                } else {
+                    log::warn!(
+                        "TOAST: Unchanged column at index {i} could not be resolved from old_values (relation_id={})",
+                        pg_output.relation_id
+                    );
+                    *value = PgOutputValue::Null;
                 }
+            }
+        }
+    } else {
+        let unresolved: Vec<usize> = pg_output
+            .payload
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| matches!(v, PgOutputValue::Unchanged))
+            .map(|(i, _)| i)
+            .collect();
+
+        if !unresolved.is_empty() {
+            log::warn!(
+                "TOAST: Unchanged columns at indexes {:?} could not be resolved — no old_values available (relation_id={}). Consider enabling REPLICA IDENTITY FULL. Falling back to NULL.",
+                unresolved,
+                pg_output.relation_id
+            );
+            for i in unresolved {
+                pg_output.payload[i] = PgOutputValue::Null;
             }
         }
     }
