@@ -359,6 +359,108 @@ impl IntoClickhouseRow for PostgresCopyRow {
 }
 
 impl PostgresConnection {
+    fn finalize_copy_field(current_word: &mut String) -> PgOutputValue {
+        if current_word == "\\N" {
+            current_word.clear();
+            return PgOutputValue::Null;
+        }
+
+        let raw = std::mem::take(current_word);
+
+        PgOutputValue::Text(Self::decode_copy_text_field(&raw))
+    }
+
+    fn decode_copy_text_field(input: &str) -> String {
+        let mut decoded = String::with_capacity(input.len());
+        let chars: Vec<char> = input.chars().collect();
+        let mut index = 0;
+
+        while index < chars.len() {
+            if chars[index] != '\\' {
+                decoded.push(chars[index]);
+                index += 1;
+                continue;
+            }
+
+            index += 1;
+
+            if index >= chars.len() {
+                decoded.push('\\');
+                break;
+            }
+
+            match chars[index] {
+                'b' => {
+                    decoded.push('\u{0008}');
+                    index += 1;
+                }
+                'f' => {
+                    decoded.push('\u{000C}');
+                    index += 1;
+                }
+                'n' => {
+                    decoded.push('\n');
+                    index += 1;
+                }
+                'r' => {
+                    decoded.push('\r');
+                    index += 1;
+                }
+                't' => {
+                    decoded.push('\t');
+                    index += 1;
+                }
+                'v' => {
+                    decoded.push('\u{000B}');
+                    index += 1;
+                }
+                '\\' => {
+                    decoded.push('\\');
+                    index += 1;
+                }
+                'x' => {
+                    if index + 2 < chars.len() {
+                        let hex: String = chars[index + 1..=index + 2].iter().collect();
+
+                        if let Ok(value) = u8::from_str_radix(&hex, 16) {
+                            decoded.push(value as char);
+                            index += 3;
+                            continue;
+                        }
+                    }
+
+                    decoded.push('x');
+                    index += 1;
+                }
+                '0'..='7' => {
+                    let start = index;
+                    let end = usize::min(index + 3, chars.len());
+                    let octal_end = chars[start..end]
+                        .iter()
+                        .take_while(|c| matches!(c, '0'..='7'))
+                        .count()
+                        + start;
+
+                    let octal: String = chars[start..octal_end].iter().collect();
+
+                    if let Ok(value) = u8::from_str_radix(&octal, 8) {
+                        decoded.push(value as char);
+                        index = octal_end;
+                    } else {
+                        decoded.push(chars[index]);
+                        index += 1;
+                    }
+                }
+                other => {
+                    decoded.push(other);
+                    index += 1;
+                }
+            }
+        }
+
+        decoded
+    }
+
     pub async fn find_publication_by_name(
         &self,
         publication_name: &str,
@@ -719,31 +821,34 @@ impl PostgresConnection {
 
                 // 바이트를 UTF-8 문자열로 변환하여 바로 파싱
                 let text = unsafe { std::str::from_utf8_unchecked(&bytes) };
+                let mut previous_was_escape = false;
 
                 for c in text.chars() {
+                    if previous_was_escape {
+                        current_word.push(c);
+                        previous_was_escape = false;
+                        continue;
+                    }
+
+                    if c == '\\' {
+                        current_word.push(c);
+                        previous_was_escape = true;
+                        continue;
+                    }
+
                     // column separator
                     if c == '\t' {
-                        if current_word == "\\N" {
-                            current_row.columns.push(PgOutputValue::Null);
-                            current_word.clear();
-                        } else {
-                            current_row
-                                .columns
-                                .push(PgOutputValue::Text(std::mem::take(&mut current_word)));
-                        }
+                        current_row
+                            .columns
+                            .push(Self::finalize_copy_field(&mut current_word));
                         continue;
                     }
 
                     // row separator
                     if c == '\n' {
-                        if current_word == "\\N" {
-                            current_row.columns.push(PgOutputValue::Null);
-                            current_word.clear();
-                        } else if !current_word.is_empty() {
-                            current_row
-                                .columns
-                                .push(PgOutputValue::Text(std::mem::take(&mut current_word)));
-                        }
+                        current_row
+                            .columns
+                            .push(Self::finalize_copy_field(&mut current_word));
 
                         rows.push(std::mem::take(&mut current_row));
                         continue;
@@ -765,5 +870,46 @@ impl PostgresConnection {
         });
 
         Ok(receiver)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PostgresConnection;
+    use crate::adapter::postgres::pgoutput::PgOutputValue;
+
+    fn decode_copy_text_field_before_fix(input: &str) -> String {
+        input.to_string()
+    }
+
+    #[test]
+    fn decode_copy_text_field_before_and_after_json_escape_sequences() {
+        let raw = r#"{"style_summary":"типа \\\"треугольник\\\""}"#;
+        let before = decode_copy_text_field_before_fix(raw);
+        let after = PostgresConnection::decode_copy_text_field(raw);
+
+        assert_eq!(before, r#"{"style_summary":"типа \\\"треугольник\\\""}"#);
+        assert_eq!(after, r#"{"style_summary":"типа \"треугольник\""}"#);
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn decode_copy_text_field_before_and_after_control_characters() {
+        let raw = r#"line1\nline2\tvalue\\path"#;
+        let before = decode_copy_text_field_before_fix(raw);
+        let after = PostgresConnection::decode_copy_text_field(raw);
+
+        assert_eq!(before, r#"line1\nline2\tvalue\\path"#);
+        assert_eq!(after, "line1\nline2\tvalue\\path");
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn decode_copy_text_field_keeps_null_sentinel_handling_separate() {
+        let mut raw = r#"\N"#.to_string();
+        let finalized = PostgresConnection::finalize_copy_field(&mut raw);
+
+        assert!(matches!(finalized, PgOutputValue::Null));
+        assert!(raw.is_empty());
     }
 }
