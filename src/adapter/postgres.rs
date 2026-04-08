@@ -359,8 +359,8 @@ impl IntoClickhouseRow for PostgresCopyRow {
 }
 
 impl PostgresConnection {
-    fn finalize_copy_field(current_word: &mut String) -> PgOutputValue {
-        if current_word == "\\N" {
+    fn finalize_copy_field(current_word: &mut Vec<u8>) -> PgOutputValue {
+        if current_word.as_slice() == b"\\N" {
             current_word.clear();
             return PgOutputValue::Null;
         }
@@ -370,59 +370,56 @@ impl PostgresConnection {
         PgOutputValue::Text(Self::decode_copy_text_field(&raw))
     }
 
-    fn decode_copy_text_field(input: &str) -> String {
+    fn decode_copy_text_field(input: &[u8]) -> String {
         let mut decoded = Vec::with_capacity(input.len());
-        let chars: Vec<char> = input.chars().collect();
         let mut index = 0;
 
-        while index < chars.len() {
-            if chars[index] != '\\' {
-                let mut buffer = [0u8; 4];
-                let encoded = chars[index].encode_utf8(&mut buffer);
-                decoded.extend_from_slice(encoded.as_bytes());
+        while index < input.len() {
+            if input[index] != b'\\' {
+                decoded.push(input[index]);
                 index += 1;
                 continue;
             }
 
             index += 1;
 
-            if index >= chars.len() {
+            if index >= input.len() {
                 decoded.push(b'\\');
                 break;
             }
 
-            match chars[index] {
-                'b' => {
+            match input[index] {
+                b'b' => {
                     decoded.push(0x08);
                     index += 1;
                 }
-                'f' => {
+                b'f' => {
                     decoded.push(0x0C);
                     index += 1;
                 }
-                'n' => {
+                b'n' => {
                     decoded.push(b'\n');
                     index += 1;
                 }
-                'r' => {
+                b'r' => {
                     decoded.push(b'\r');
                     index += 1;
                 }
-                't' => {
+                b't' => {
                     decoded.push(b'\t');
                     index += 1;
                 }
-                'v' => {
+                b'v' => {
                     decoded.push(0x0B);
                     index += 1;
                 }
-                '\\' => {
+                b'\\' => {
                     decoded.push(b'\\');
                     index += 1;
                 }
-                'x' => {
-                    let end = usize::min(index + 3, chars.len());
-                    let hex_end = chars[index + 1..end]
+                b'x' => {
+                    let end = usize::min(index + 3, input.len());
+                    let hex_end = input[index + 1..end]
                         .iter()
                         .take_while(|c| c.is_ascii_hexdigit())
                         .count()
@@ -430,42 +427,40 @@ impl PostgresConnection {
                         + 1;
 
                     if hex_end > index + 1 {
-                        let hex: String = chars[index + 1..hex_end].iter().collect();
-                        if let Ok(value) = u8::from_str_radix(&hex, 16) {
-                            decoded.push(value);
-                            index = hex_end;
-                            continue;
+                        if let Ok(hex) = std::str::from_utf8(&input[index + 1..hex_end]) {
+                            if let Ok(value) = u8::from_str_radix(hex, 16) {
+                                decoded.push(value);
+                                index = hex_end;
+                                continue;
+                            }
                         }
                     }
 
                     decoded.push(b'x');
                     index += 1;
                 }
-                '0'..='7' => {
+                b'0'..=b'7' => {
                     let start = index;
-                    let end = usize::min(index + 3, chars.len());
-                    let octal_end = chars[start..end]
+                    let end = usize::min(index + 3, input.len());
+                    let octal_end = input[start..end]
                         .iter()
-                        .take_while(|c| matches!(c, '0'..='7'))
+                        .take_while(|c| matches!(c, b'0'..=b'7'))
                         .count()
                         + start;
 
-                    let octal: String = chars[start..octal_end].iter().collect();
-
-                    if let Ok(value) = u8::from_str_radix(&octal, 8) {
-                        decoded.push(value);
-                        index = octal_end;
-                    } else {
-                        let mut buffer = [0u8; 4];
-                        let encoded = chars[index].encode_utf8(&mut buffer);
-                        decoded.extend_from_slice(encoded.as_bytes());
-                        index += 1;
+                    if let Ok(octal) = std::str::from_utf8(&input[start..octal_end]) {
+                        if let Ok(value) = u8::from_str_radix(octal, 8) {
+                            decoded.push(value);
+                            index = octal_end;
+                            continue;
+                        }
                     }
+
+                    decoded.push(input[index]);
+                    index += 1;
                 }
                 other => {
-                    let mut buffer = [0u8; 4];
-                    let encoded = other.encode_utf8(&mut buffer);
-                    decoded.extend_from_slice(encoded.as_bytes());
+                    decoded.push(other);
                     index += 1;
                 }
             }
@@ -475,49 +470,64 @@ impl PostgresConnection {
             .unwrap_or_else(|error| String::from_utf8_lossy(&error.into_bytes()).into_owned())
     }
 
-    #[cfg(test)]
-    fn parse_copy_chunks(chunks: &[&str]) -> Vec<PostgresCopyRow> {
-        let mut current_row = PostgresCopyRow {
-            columns: Vec::new(),
-        };
-        let mut current_word = String::new();
-        let mut previous_was_escape = false;
+    fn parse_copy_bytes_chunks_with_state(
+        chunks: &[&[u8]],
+        current_row: &mut PostgresCopyRow,
+        current_word: &mut Vec<u8>,
+        previous_was_escape: &mut bool,
+    ) -> Vec<PostgresCopyRow> {
         let mut rows = Vec::new();
 
-        for text in chunks {
-            for c in text.chars() {
-                if previous_was_escape {
-                    current_word.push(c);
-                    previous_was_escape = false;
+        for chunk in chunks {
+            for &byte in *chunk {
+                if *previous_was_escape {
+                    current_word.push(byte);
+                    *previous_was_escape = false;
                     continue;
                 }
 
-                if c == '\\' {
-                    current_word.push(c);
-                    previous_was_escape = true;
+                if byte == b'\\' {
+                    current_word.push(byte);
+                    *previous_was_escape = true;
                     continue;
                 }
 
-                if c == '\t' {
+                if byte == b'\t' {
                     current_row
                         .columns
-                        .push(Self::finalize_copy_field(&mut current_word));
+                        .push(Self::finalize_copy_field(current_word));
                     continue;
                 }
 
-                if c == '\n' {
+                if byte == b'\n' {
                     current_row
                         .columns
-                        .push(Self::finalize_copy_field(&mut current_word));
-                    rows.push(std::mem::take(&mut current_row));
+                        .push(Self::finalize_copy_field(current_word));
+                    rows.push(std::mem::take(current_row));
                     continue;
                 }
 
-                current_word.push(c);
+                current_word.push(byte);
             }
         }
 
         rows
+    }
+
+    #[cfg(test)]
+    fn parse_copy_chunks(chunks: &[&[u8]]) -> Vec<PostgresCopyRow> {
+        let mut current_row = PostgresCopyRow {
+            columns: Vec::new(),
+        };
+        let mut current_word = Vec::new();
+        let mut previous_was_escape = false;
+
+        Self::parse_copy_bytes_chunks_with_state(
+            chunks,
+            &mut current_row,
+            &mut current_word,
+            &mut previous_was_escape,
+        )
     }
 
     pub async fn find_publication_by_name(
@@ -864,13 +874,11 @@ impl PostgresConnection {
             let mut current_row = PostgresCopyRow {
                 columns: Vec::new(),
             };
-            let mut current_word = String::new();
+            let mut current_word = Vec::new();
             let mut previous_was_escape = false;
 
             let mut stream: std::pin::Pin<Box<tokio_postgres::CopyOutStream>> = Box::pin(copy_sink);
             while let Some(chunk) = stream.next().await {
-                let mut rows = Vec::new();
-
                 let bytes = match chunk {
                     Ok(bytes) => bytes,
                     Err(error) => {
@@ -879,42 +887,12 @@ impl PostgresConnection {
                     }
                 };
 
-                // 바이트를 UTF-8 문자열로 변환하여 바로 파싱
-                let text = unsafe { std::str::from_utf8_unchecked(&bytes) };
-
-                for c in text.chars() {
-                    if previous_was_escape {
-                        current_word.push(c);
-                        previous_was_escape = false;
-                        continue;
-                    }
-
-                    if c == '\\' {
-                        current_word.push(c);
-                        previous_was_escape = true;
-                        continue;
-                    }
-
-                    // column separator
-                    if c == '\t' {
-                        current_row
-                            .columns
-                            .push(Self::finalize_copy_field(&mut current_word));
-                        continue;
-                    }
-
-                    // row separator
-                    if c == '\n' {
-                        current_row
-                            .columns
-                            .push(Self::finalize_copy_field(&mut current_word));
-
-                        rows.push(std::mem::take(&mut current_row));
-                        continue;
-                    }
-
-                    current_word.push(c);
-                }
+                let rows = Self::parse_copy_bytes_chunks_with_state(
+                    &[bytes.as_ref()],
+                    &mut current_row,
+                    &mut current_word,
+                    &mut previous_was_escape,
+                );
 
                 sender
                     .send(rows)
@@ -1015,7 +993,7 @@ mod tests {
     fn decode_copy_text_field_before_and_after_json_escape_sequences() {
         let raw = r#"{"style_summary":"типа \\\"треугольник\\\""}"#;
         let before = decode_copy_text_field_before_fix(raw);
-        let after = PostgresConnection::decode_copy_text_field(raw);
+        let after = PostgresConnection::decode_copy_text_field(raw.as_bytes());
 
         assert_eq!(before, r#"{"style_summary":"типа \\\"треугольник\\\""}"#);
         assert_eq!(after, r#"{"style_summary":"типа \"треугольник\""}"#);
@@ -1026,7 +1004,7 @@ mod tests {
     fn decode_copy_text_field_before_and_after_control_characters() {
         let raw = r#"line1\nline2\tvalue\\path"#;
         let before = decode_copy_text_field_before_fix(raw);
-        let after = PostgresConnection::decode_copy_text_field(raw);
+        let after = PostgresConnection::decode_copy_text_field(raw.as_bytes());
 
         assert_eq!(before, r#"line1\nline2\tvalue\\path"#);
         assert_eq!(after, "line1\nline2\tvalue\\path");
@@ -1037,7 +1015,7 @@ mod tests {
     fn decode_copy_text_field_before_and_after_single_digit_hex_escape() {
         let raw = r#"prefix\xAsuffix"#;
         let before = decode_copy_text_field_before_fix(raw);
-        let after = PostgresConnection::decode_copy_text_field(raw);
+        let after = PostgresConnection::decode_copy_text_field(raw.as_bytes());
 
         assert_eq!(before, r#"prefix\xAsuffix"#);
         assert_eq!(after, "prefix\nsuffix");
@@ -1048,7 +1026,7 @@ mod tests {
     fn decode_copy_text_field_before_and_after_double_digit_hex_escape() {
         let raw = r#"prefix\x41suffix"#;
         let before = decode_copy_text_field_before_fix(raw);
-        let after = PostgresConnection::decode_copy_text_field(raw);
+        let after = PostgresConnection::decode_copy_text_field(raw.as_bytes());
 
         assert_eq!(before, r#"prefix\x41suffix"#);
         assert_eq!(after, "prefixAsuffix");
@@ -1059,7 +1037,7 @@ mod tests {
     fn decode_copy_text_field_restores_utf8_multibyte_hex_escape() {
         let raw = r#"\xC3\xA9"#;
         let before = decode_copy_text_field_before_utf8_byte_fix(raw);
-        let after = PostgresConnection::decode_copy_text_field(raw);
+        let after = PostgresConnection::decode_copy_text_field(raw.as_bytes());
 
         assert_eq!(before, "Ã©");
         assert_eq!(after, "é");
@@ -1070,7 +1048,7 @@ mod tests {
     fn decode_copy_text_field_restores_utf8_multibyte_octal_escape() {
         let raw = r#"\303\251"#;
         let before = decode_copy_text_field_before_utf8_byte_fix(raw);
-        let after = PostgresConnection::decode_copy_text_field(raw);
+        let after = PostgresConnection::decode_copy_text_field(raw.as_bytes());
 
         assert_eq!(before, "Ã©");
         assert_eq!(after, "é");
@@ -1079,7 +1057,7 @@ mod tests {
 
     #[test]
     fn decode_copy_text_field_keeps_null_sentinel_handling_separate() {
-        let mut raw = r#"\N"#.to_string();
+        let mut raw = r#"\N"#.as_bytes().to_vec();
         let finalized = PostgresConnection::finalize_copy_field(&mut raw);
 
         assert!(matches!(finalized, PgOutputValue::Null));
@@ -1088,17 +1066,29 @@ mod tests {
 
     #[test]
     fn parse_copy_chunks_preserves_escape_state_across_chunk_boundaries() {
-        let rows = PostgresConnection::parse_copy_chunks(&[
-            r#"prefix\"#,
-            r#""suffix	1
-"#,
-        ]);
+        let rows = PostgresConnection::parse_copy_chunks(&[br#"prefix\"#, b"\"suffix\t1\n"]);
 
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].columns.len(), 2);
         assert!(matches!(
             &rows[0].columns[0],
             PgOutputValue::Text(value) if value == "prefix\"suffix"
+        ));
+        assert!(matches!(
+            &rows[0].columns[1],
+            PgOutputValue::Text(value) if value == "1"
+        ));
+    }
+
+    #[test]
+    fn parse_copy_chunks_preserves_utf8_across_chunk_boundaries() {
+        let rows = PostgresConnection::parse_copy_chunks(&[b"caf\xC3", b"\xA9\t1\n"]);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].columns.len(), 2);
+        assert!(matches!(
+            &rows[0].columns[0],
+            PgOutputValue::Text(value) if value == "café"
         ));
         assert!(matches!(
             &rows[0].columns[1],
