@@ -1,3 +1,4 @@
+pub mod cassandradb;
 pub mod clickhouse;
 pub mod mongodb;
 pub mod postgres;
