@@ -468,6 +468,51 @@ impl PostgresConnection {
         decoded
     }
 
+    #[cfg(test)]
+    fn parse_copy_chunks(chunks: &[&str]) -> Vec<PostgresCopyRow> {
+        let mut current_row = PostgresCopyRow {
+            columns: Vec::new(),
+        };
+        let mut current_word = String::new();
+        let mut previous_was_escape = false;
+        let mut rows = Vec::new();
+
+        for text in chunks {
+            for c in text.chars() {
+                if previous_was_escape {
+                    current_word.push(c);
+                    previous_was_escape = false;
+                    continue;
+                }
+
+                if c == '\\' {
+                    current_word.push(c);
+                    previous_was_escape = true;
+                    continue;
+                }
+
+                if c == '\t' {
+                    current_row
+                        .columns
+                        .push(Self::finalize_copy_field(&mut current_word));
+                    continue;
+                }
+
+                if c == '\n' {
+                    current_row
+                        .columns
+                        .push(Self::finalize_copy_field(&mut current_word));
+                    rows.push(std::mem::take(&mut current_row));
+                    continue;
+                }
+
+                current_word.push(c);
+            }
+        }
+
+        rows
+    }
+
     pub async fn find_publication_by_name(
         &self,
         publication_name: &str,
@@ -813,6 +858,7 @@ impl PostgresConnection {
                 columns: Vec::new(),
             };
             let mut current_word = String::new();
+            let mut previous_was_escape = false;
 
             let mut stream: std::pin::Pin<Box<tokio_postgres::CopyOutStream>> = Box::pin(copy_sink);
             while let Some(chunk) = stream.next().await {
@@ -828,7 +874,6 @@ impl PostgresConnection {
 
                 // 바이트를 UTF-8 문자열로 변환하여 바로 파싱
                 let text = unsafe { std::str::from_utf8_unchecked(&bytes) };
-                let mut previous_was_escape = false;
 
                 for c in text.chars() {
                     if previous_was_escape {
@@ -940,5 +985,25 @@ mod tests {
 
         assert!(matches!(finalized, PgOutputValue::Null));
         assert!(raw.is_empty());
+    }
+
+    #[test]
+    fn parse_copy_chunks_preserves_escape_state_across_chunk_boundaries() {
+        let rows = PostgresConnection::parse_copy_chunks(&[
+            r#"prefix\"#,
+            r#""suffix	1
+"#,
+        ]);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].columns.len(), 2);
+        assert!(matches!(
+            &rows[0].columns[0],
+            PgOutputValue::Text(value) if value == "prefix\"suffix"
+        ));
+        assert!(matches!(
+            &rows[0].columns[1],
+            PgOutputValue::Text(value) if value == "1"
+        ));
     }
 }
