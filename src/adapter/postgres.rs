@@ -419,12 +419,19 @@ impl PostgresConnection {
                     index += 1;
                 }
                 'x' => {
-                    if index + 2 < chars.len() {
-                        let hex: String = chars[index + 1..=index + 2].iter().collect();
+                    let end = usize::min(index + 3, chars.len());
+                    let hex_end = chars[index + 1..end]
+                        .iter()
+                        .take_while(|c| c.is_ascii_hexdigit())
+                        .count()
+                        + index
+                        + 1;
 
+                    if hex_end > index + 1 {
+                        let hex: String = chars[index + 1..hex_end].iter().collect();
                         if let Ok(value) = u8::from_str_radix(&hex, 16) {
                             decoded.push(value as char);
-                            index += 3;
+                            index = hex_end;
                             continue;
                         }
                     }
@@ -901,6 +908,28 @@ mod tests {
 
         assert_eq!(before, r#"line1\nline2\tvalue\\path"#);
         assert_eq!(after, "line1\nline2\tvalue\\path");
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn decode_copy_text_field_before_and_after_single_digit_hex_escape() {
+        let raw = r#"prefix\xAsuffix"#;
+        let before = decode_copy_text_field_before_fix(raw);
+        let after = PostgresConnection::decode_copy_text_field(raw);
+
+        assert_eq!(before, r#"prefix\xAsuffix"#);
+        assert_eq!(after, "prefix\nsuffix");
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn decode_copy_text_field_before_and_after_double_digit_hex_escape() {
+        let raw = r#"prefix\x41suffix"#;
+        let before = decode_copy_text_field_before_fix(raw);
+        let after = PostgresConnection::decode_copy_text_field(raw);
+
+        assert_eq!(before, r#"prefix\x41suffix"#);
+        assert_eq!(after, "prefixAsuffix");
         assert_ne!(before, after);
     }
 
