@@ -903,16 +903,24 @@ async fn connect_copy_client(
 ) -> errors::Result<tokio_postgres::Client> {
     use crate::config::PostgresSslMode;
 
+    // sslmode 파라미터가 문자열에 없으면 tokio-postgres 기본값이 Prefer가 되어
+    // Require/VerifyCa/VerifyFull 설정에서도 TLS 실패 시 평문으로 폴백할 수 있다.
+    // Config에서 명시적으로 지정한다.
+    let mut pg_config: tokio_postgres::Config = connection_string.parse().map_err(|e| {
+        errors::Errors::CopyTableFailed(format!(
+            "Failed to parse Postgres connection string: {e}"
+        ))
+    })?;
+
     match config.ssl_mode {
         PostgresSslMode::Disable => {
+            pg_config.ssl_mode(tokio_postgres::config::SslMode::Disable);
             let (client, connection) =
-                tokio_postgres::connect(connection_string, tokio_postgres::NoTls)
-                    .await
-                    .map_err(|e| {
-                        errors::Errors::CopyTableFailed(format!(
-                            "Failed to connect to PostgreSQL for COPY: {e}"
-                        ))
-                    })?;
+                pg_config.connect(tokio_postgres::NoTls).await.map_err(|e| {
+                    errors::Errors::CopyTableFailed(format!(
+                        "Failed to connect to PostgreSQL for COPY: {e}"
+                    ))
+                })?;
             tokio::spawn(async move {
                 if let Err(e) = connection.await {
                     log::error!("Connection error: {e}");
@@ -920,16 +928,30 @@ async fn connect_copy_client(
             });
             Ok(client)
         }
-        _ => {
+        PostgresSslMode::Prefer => {
+            pg_config.ssl_mode(tokio_postgres::config::SslMode::Prefer);
             let tls = build_rustls_connector(config)?;
-            let (client, connection) =
-                tokio_postgres::connect(connection_string, tls)
-                    .await
-                    .map_err(|e| {
-                        errors::Errors::CopyTableFailed(format!(
-                            "Failed to connect to PostgreSQL for COPY: {e}"
-                        ))
-                    })?;
+            let (client, connection) = pg_config.connect(tls).await.map_err(|e| {
+                errors::Errors::CopyTableFailed(format!(
+                    "Failed to connect to PostgreSQL for COPY: {e}"
+                ))
+            })?;
+            tokio::spawn(async move {
+                if let Err(e) = connection.await {
+                    log::error!("Connection error: {e}");
+                }
+            });
+            Ok(client)
+        }
+        PostgresSslMode::Require | PostgresSslMode::VerifyCa | PostgresSslMode::VerifyFull => {
+            // TLS 실패 시 평문 폴백을 차단한다.
+            pg_config.ssl_mode(tokio_postgres::config::SslMode::Require);
+            let tls = build_rustls_connector(config)?;
+            let (client, connection) = pg_config.connect(tls).await.map_err(|e| {
+                errors::Errors::CopyTableFailed(format!(
+                    "Failed to connect to PostgreSQL for COPY: {e}"
+                ))
+            })?;
             tokio::spawn(async move {
                 if let Err(e) = connection.await {
                     log::error!("Connection error: {e}");
@@ -960,30 +982,17 @@ fn build_rustls_connector(
                 .with_custom_certificate_verifier(Arc::new(NoCertVerification::new()))
                 .with_no_client_auth()
         }
-        PostgresSslMode::VerifyCa | PostgresSslMode::VerifyFull => {
-            let mut root_store = rustls::RootCertStore::empty();
-            if let Some(ca_path) = &config.ssl_root_cert {
-                let pem = std::fs::read(ca_path).map_err(|e| {
-                    errors::Errors::CopyTableFailed(format!(
-                        "Failed to read ssl_root_cert {ca_path}: {e}"
-                    ))
-                })?;
-                for cert in rustls_pemfile::certs(&mut pem.as_slice()) {
-                    let cert = cert.map_err(|e| {
-                        errors::Errors::CopyTableFailed(format!(
-                            "Failed to parse ssl_root_cert PEM: {e}"
-                        ))
-                    })?;
-                    root_store.add(cert).map_err(|e| {
-                        errors::Errors::CopyTableFailed(format!(
-                            "Failed to add ssl_root_cert to trust store: {e}"
-                        ))
-                    })?;
-                }
-            } else {
-                root_store
-                    .extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-            }
+        PostgresSslMode::VerifyCa => {
+            // libpq의 verify-ca와 동일하게 체인만 검증하고 호스트 이름은 검사하지 않는다.
+            let root_store = load_root_store(config)?;
+            rustls::ClientConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(ChainOnlyVerification::new(root_store)))
+                .with_no_client_auth()
+        }
+        PostgresSslMode::VerifyFull => {
+            // 체인 + 호스트 이름 모두 검증 (rustls 기본 WebPkiServerVerifier)
+            let root_store = load_root_store(config)?;
             rustls::ClientConfig::builder()
                 .with_root_certificates(root_store)
                 .with_no_client_auth()
@@ -992,6 +1001,32 @@ fn build_rustls_connector(
     };
 
     Ok(tokio_postgres_rustls::MakeRustlsConnect::new(rustls_config))
+}
+
+fn load_root_store(config: &PostgresConnectionConfig) -> errors::Result<rustls::RootCertStore> {
+    let mut root_store = rustls::RootCertStore::empty();
+    if let Some(ca_path) = &config.ssl_root_cert {
+        let pem = std::fs::read(ca_path).map_err(|e| {
+            errors::Errors::CopyTableFailed(format!(
+                "Failed to read ssl_root_cert {ca_path}: {e}"
+            ))
+        })?;
+        for cert in rustls_pemfile::certs(&mut pem.as_slice()) {
+            let cert = cert.map_err(|e| {
+                errors::Errors::CopyTableFailed(format!(
+                    "Failed to parse ssl_root_cert PEM: {e}"
+                ))
+            })?;
+            root_store.add(cert).map_err(|e| {
+                errors::Errors::CopyTableFailed(format!(
+                    "Failed to add ssl_root_cert to trust store: {e}"
+                ))
+            })?;
+        }
+    } else {
+        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    }
+    Ok(root_store)
 }
 
 #[derive(Debug)]
@@ -1016,6 +1051,65 @@ impl rustls::client::danger::ServerCertVerifier for NoCertVerification {
         _ocsp_response: &[u8],
         _now: rustls::pki_types::UnixTime,
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.supported)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.supported)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.supported.supported_schemes()
+    }
+}
+
+/// libpq의 verify-ca에 대응: 신뢰 저장소로 체인만 검증하고 호스트 이름은 검사하지 않는다.
+#[derive(Debug)]
+struct ChainOnlyVerification {
+    roots: std::sync::Arc<rustls::RootCertStore>,
+    supported: rustls::crypto::WebPkiSupportedAlgorithms,
+}
+
+impl ChainOnlyVerification {
+    fn new(roots: rustls::RootCertStore) -> Self {
+        Self {
+            roots: std::sync::Arc::new(roots),
+            supported: rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        }
+    }
+}
+
+impl rustls::client::danger::ServerCertVerifier for ChainOnlyVerification {
+    fn verify_server_cert(
+        &self,
+        end_entity: &rustls::pki_types::CertificateDer<'_>,
+        intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        let cert = rustls::server::ParsedCertificate::try_from(end_entity)?;
+        rustls::client::verify_server_cert_signed_by_trust_anchor(
+            &cert,
+            &self.roots,
+            intermediates,
+            now,
+            self.supported.all,
+        )?;
         Ok(rustls::client::danger::ServerCertVerified::assertion())
     }
 
