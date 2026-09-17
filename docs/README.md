@@ -62,6 +62,7 @@ config example
 | target.target_type                  | clickhouse                                                                   | true     |         |
 | target.clickhouse.table_options     | global table options. [Details](./clickhouse/README.md)                      | false    |         |
 | target.clickhouse.disable_sync_loop | Disables continuous synchronization. Only the first copy is processed.       | false    | false   |
+| target.clickhouse.connection.secure | Use HTTPS (TLS) when connecting to ClickHouse.                               | false    | false   |
 | sleep_millis_when_peek_failed       | Wait time when fetching CDC data fails. (ms)                                 | false    | 5000    |
 | sleep_millis_when_peek_is_empty     | Wait time when there are no results from retrieving CDC data. (ms)           | false    | 5000    |
 | sleep_millis_when_write_failed      | Wait time when writing using CDC data fails (ms)                             | false    | 5000    |

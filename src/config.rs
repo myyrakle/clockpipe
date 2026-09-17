@@ -290,4 +290,6 @@ pub struct ClickHouseConnectionConfig {
     pub username: String,
     pub password: String,
     pub database: String,
+    #[serde(default)]
+    pub secure: bool,
 }

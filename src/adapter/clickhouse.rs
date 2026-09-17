@@ -160,14 +160,16 @@ impl ClickhouseColumn {
 
 impl ClickhouseConnection {
     pub fn new(config: &crate::config::ClickHouseConnectionConfig) -> Self {
+        let scheme = if config.secure { "https" } else { "http" };
         let client = clickhouse::Client::default()
-            .with_url(format!("http://{}:{}", config.host, config.port))
+            .with_url(format!("{}://{}:{}", scheme, config.host, config.port))
             .with_user(config.username.as_str())
             .with_password(config.password.as_str())
             .with_database(config.database.as_str());
 
         log::info!(
-            "Created ClickHouse connection to {}:{}",
+            "Created ClickHouse connection to {}://{}:{}",
+            scheme,
             config.host,
             config.port
         );
