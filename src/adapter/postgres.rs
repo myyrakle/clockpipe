@@ -840,21 +840,8 @@ impl PostgresConnection {
 
         let connection_string = self.config.connection_string();
 
-        // tokio-postgres를 사용하여 COPY TO STDOUT 실행
-        let (client, connection) =
-            tokio_postgres::connect(connection_string.as_str(), tokio_postgres::NoTls)
-                .await
-                .map_err(|e| {
-                    errors::Errors::CopyTableFailed(format!(
-                        "Failed to connect to PostgreSQL for COPY: {e}"
-                    ))
-                })?;
-
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                log::error!("Connection error: {e}");
-            }
-        });
+        // tokio-postgres를 사용하여 COPY TO STDOUT 실행 (ssl_mode에 맞춰 TLS 적용)
+        let client = connect_copy_client(&connection_string, &self.config).await?;
 
         // COPY TO STDOUT 실행
         let copy_sink = client.copy_out(&query).await.map_err(|e| {
@@ -907,6 +894,151 @@ impl PostgresConnection {
         });
 
         Ok(receiver)
+    }
+}
+
+async fn connect_copy_client(
+    connection_string: &str,
+    config: &PostgresConnectionConfig,
+) -> errors::Result<tokio_postgres::Client> {
+    use crate::config::PostgresSslMode;
+
+    match config.ssl_mode {
+        PostgresSslMode::Disable => {
+            let (client, connection) =
+                tokio_postgres::connect(connection_string, tokio_postgres::NoTls)
+                    .await
+                    .map_err(|e| {
+                        errors::Errors::CopyTableFailed(format!(
+                            "Failed to connect to PostgreSQL for COPY: {e}"
+                        ))
+                    })?;
+            tokio::spawn(async move {
+                if let Err(e) = connection.await {
+                    log::error!("Connection error: {e}");
+                }
+            });
+            Ok(client)
+        }
+        _ => {
+            let tls = build_rustls_connector(config)?;
+            let (client, connection) =
+                tokio_postgres::connect(connection_string, tls)
+                    .await
+                    .map_err(|e| {
+                        errors::Errors::CopyTableFailed(format!(
+                            "Failed to connect to PostgreSQL for COPY: {e}"
+                        ))
+                    })?;
+            tokio::spawn(async move {
+                if let Err(e) = connection.await {
+                    log::error!("Connection error: {e}");
+                }
+            });
+            Ok(client)
+        }
+    }
+}
+
+fn build_rustls_connector(
+    config: &PostgresConnectionConfig,
+) -> errors::Result<tokio_postgres_rustls::MakeRustlsConnect> {
+    use crate::config::PostgresSslMode;
+    use std::sync::Arc;
+
+    // 여러 crate가 rustls를 끌어와 프로바이더 자동 선택이 실패하므로 명시적으로 설치한다.
+    static PROVIDER_INIT: std::sync::Once = std::sync::Once::new();
+    PROVIDER_INIT.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+
+    let rustls_config = match config.ssl_mode {
+        PostgresSslMode::Prefer | PostgresSslMode::Require => {
+            // sqlx의 Prefer/Require와 동일하게 서버 인증서 검증을 건너뛴다
+            rustls::ClientConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(NoCertVerification::new()))
+                .with_no_client_auth()
+        }
+        PostgresSslMode::VerifyCa | PostgresSslMode::VerifyFull => {
+            let mut root_store = rustls::RootCertStore::empty();
+            if let Some(ca_path) = &config.ssl_root_cert {
+                let pem = std::fs::read(ca_path).map_err(|e| {
+                    errors::Errors::CopyTableFailed(format!(
+                        "Failed to read ssl_root_cert {ca_path}: {e}"
+                    ))
+                })?;
+                for cert in rustls_pemfile::certs(&mut pem.as_slice()) {
+                    let cert = cert.map_err(|e| {
+                        errors::Errors::CopyTableFailed(format!(
+                            "Failed to parse ssl_root_cert PEM: {e}"
+                        ))
+                    })?;
+                    root_store.add(cert).map_err(|e| {
+                        errors::Errors::CopyTableFailed(format!(
+                            "Failed to add ssl_root_cert to trust store: {e}"
+                        ))
+                    })?;
+                }
+            } else {
+                root_store
+                    .extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+            }
+            rustls::ClientConfig::builder()
+                .with_root_certificates(root_store)
+                .with_no_client_auth()
+        }
+        PostgresSslMode::Disable => unreachable!("Disable는 상위에서 처리"),
+    };
+
+    Ok(tokio_postgres_rustls::MakeRustlsConnect::new(rustls_config))
+}
+
+#[derive(Debug)]
+struct NoCertVerification {
+    supported: rustls::crypto::WebPkiSupportedAlgorithms,
+}
+
+impl NoCertVerification {
+    fn new() -> Self {
+        Self {
+            supported: rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        }
+    }
+}
+
+impl rustls::client::danger::ServerCertVerifier for NoCertVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.supported)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.supported)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.supported.supported_schemes()
     }
 }
 
