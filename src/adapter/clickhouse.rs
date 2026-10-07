@@ -158,6 +158,34 @@ impl ClickhouseColumn {
     }
 }
 
+fn unescape_tsv_cell(cell: &str) -> Option<String> {
+    if cell == "\\N" {
+        return None;
+    }
+    let mut out = String::with_capacity(cell.len());
+    let mut chars = cell.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some('0') => out.push('\0'),
+            Some('\\') => out.push('\\'),
+            Some('\'') => out.push('\''),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    Some(out)
+}
+
 impl ClickhouseConnection {
     pub fn new(config: &crate::config::ClickHouseConnectionConfig) -> Self {
         let scheme = if config.secure { "https" } else { "http" };
@@ -252,6 +280,50 @@ impl ClickhouseConnection {
             })?;
 
         Ok(exists)
+    }
+
+    /// Runs an arbitrary SELECT and returns rows as `Vec<Vec<Option<String>>>`.
+    /// The query must emit `TabSeparated`-compatible columns (typically wrapped
+    /// with `toString(...)`); `\N` is decoded as NULL, TSV escapes are unescaped.
+    pub async fn fetch_string_rows(
+        &self,
+        query: &str,
+    ) -> errors::Result<Vec<Vec<Option<String>>>> {
+        let mut cursor = self
+            .client
+            .query(query)
+            .fetch_bytes("TabSeparated")
+            .map_err(|e| {
+                crate::errors::Errors::DatabaseQueryError(format!(
+                    "Failed to start fetch_bytes: {e}, query: {query}"
+                ))
+            })?;
+
+        let mut buffer: Vec<u8> = Vec::new();
+        while let Some(chunk) = cursor.next().await.map_err(|e| {
+            crate::errors::Errors::DatabaseQueryError(format!(
+                "Failed to read chunk: {e}, query: {query}"
+            ))
+        })? {
+            buffer.extend_from_slice(&chunk);
+        }
+
+        let text = String::from_utf8(buffer).map_err(|e| {
+            crate::errors::Errors::DatabaseQueryError(format!(
+                "TSV response is not valid UTF-8: {e}, query: {query}"
+            ))
+        })?;
+
+        let mut rows = Vec::new();
+        for line in text.split('\n') {
+            if line.is_empty() {
+                continue;
+            }
+            let cells: Vec<Option<String>> = line.split('\t').map(unescape_tsv_cell).collect();
+            rows.push(cells);
+        }
+
+        Ok(rows)
     }
 
     pub async fn truncate_table(&self, schema_name: &str, table_name: &str) -> errors::Result<()> {

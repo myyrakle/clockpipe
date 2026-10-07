@@ -6,10 +6,10 @@ use crate::{
         clickhouse::ClickhouseColumn,
         postgres::{
             PostgresColumn, PostgresCopyRow,
-            pgoutput::{MessageType, parse_pg_output},
+            pgoutput::{MessageType, PgOutputValue, parse_pg_output},
         },
     },
-    config::Configuraion,
+    config::{Configuraion, ToastFallback},
     errors::Errors,
     logger::ProgressLogger,
     pipes::{IPipe, WriteCounter},
@@ -419,6 +419,26 @@ impl IPipe for PostgresPipe {
                 }
             }
 
+            // 2.5. Resolve leftover TOAST-Unchanged columns (batch-local + optional CH lookup)
+            for (table_name, batch) in batch_insert_queue.iter_mut() {
+                if let Err(error) = resolve_toast_unchanged(
+                    &self.clickhouse_connection,
+                    &self.clickhouse_config,
+                    self.postgres_config.toast_fallback.as_ref(),
+                    table_name,
+                    batch,
+                )
+                .await
+                {
+                    log::error!("Failed to resolve TOAST for {table_name}: {error}");
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        self.config.sleep_millis_when_write_failed,
+                    ))
+                    .await;
+                    continue 'SYNC_LOOP;
+                }
+            }
+
             // 3. Insert/Update rows in ClickHouse
             for (table_name, batch) in batch_insert_queue.iter() {
                 let insert_query = self.generate_insert_query(
@@ -766,6 +786,294 @@ pub async fn run_postgres_pipe(config: Configuraion) {
             log::info!("Postgres pipe running...");
         }
     }
+}
+
+async fn resolve_toast_unchanged(
+    ch_connection: &adapter::clickhouse::ClickhouseConnection,
+    ch_config: &crate::config::ClickHouseConfig,
+    fallback: Option<&ToastFallback>,
+    table_name: &str,
+    batch: &mut BatchWriteEntry<'_>,
+) -> Result<(), Errors> {
+    let pg_columns = &batch.table_info.postgres_columns;
+    let ch_columns = &batch.table_info.clickhouse_columns;
+
+    let pk_row_indexes: Vec<usize> = pg_columns
+        .iter()
+        .filter(|c| c.is_primary_key)
+        .map(|c| (c.column_index - 1) as usize)
+        .collect();
+
+    // If there is no primary key we cannot uniquely look up rows —
+    // batch-local fill is still meaningful only when we can key by something,
+    // so skip and let final NULL-fallback run.
+    if pk_row_indexes.is_empty() {
+        null_fill_leftovers(&mut batch.rows, table_name);
+        return Ok(());
+    }
+
+    batch_local_fill(&mut batch.rows, &pk_row_indexes);
+
+    let still_unresolved = batch
+        .rows
+        .iter()
+        .any(|r| r.columns.iter().any(|v| matches!(v, PgOutputValue::Unchanged)));
+
+    if still_unresolved && matches!(fallback, Some(ToastFallback::Lookup)) {
+        clickhouse_fill(
+            ch_connection,
+            ch_config,
+            table_name,
+            pg_columns,
+            ch_columns,
+            &pk_row_indexes,
+            &mut batch.rows,
+        )
+        .await?;
+    }
+
+    null_fill_leftovers(&mut batch.rows, table_name);
+    Ok(())
+}
+
+fn batch_local_fill(rows: &mut [PostgresCopyRow], pk_row_indexes: &[usize]) {
+    let mut last_by_pk: HashMap<String, Vec<PgOutputValue>> = HashMap::new();
+    for row in rows.iter_mut() {
+        let pk_key = pk_signature(row, pk_row_indexes);
+        if let Some(prev) = last_by_pk.get(&pk_key) {
+            for (j, value) in row.columns.iter_mut().enumerate() {
+                if matches!(value, PgOutputValue::Unchanged)
+                    && let Some(prev_v) = prev.get(j)
+                    && !matches!(prev_v, PgOutputValue::Unchanged)
+                {
+                    *value = prev_v.clone();
+                }
+            }
+        }
+        last_by_pk.insert(pk_key, row.columns.clone());
+    }
+}
+
+fn pk_signature(row: &PostgresCopyRow, pk_row_indexes: &[usize]) -> String {
+    pk_row_indexes
+        .iter()
+        .map(|&i| match row.columns.get(i) {
+            Some(PgOutputValue::Text(s)) => format!("T:{s}"),
+            Some(PgOutputValue::Null) => "N:".to_string(),
+            Some(PgOutputValue::Binary(b)) => format!("B:{}", hex_lower(b)),
+            Some(PgOutputValue::Unchanged) => "U:".to_string(),
+            Some(PgOutputValue::ClickhouseLiteral(s)) => format!("L:{s}"),
+            Some(PgOutputValue::Unit) | None => "-:".to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+fn is_clickhouse_array_type(data_type: &str) -> bool {
+    data_type.starts_with("Array(") || data_type.starts_with("Nullable(Array(")
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
+fn null_fill_leftovers(rows: &mut [PostgresCopyRow], table_name: &str) {
+    for row in rows.iter_mut() {
+        let mut leftover_indexes = Vec::new();
+        for (j, value) in row.columns.iter_mut().enumerate() {
+            if matches!(value, PgOutputValue::Unchanged) {
+                *value = PgOutputValue::Null;
+                leftover_indexes.push(j);
+            }
+        }
+        if !leftover_indexes.is_empty() {
+            log::warn!(
+                "TOAST: Unchanged columns at indexes {leftover_indexes:?} for table {table_name} could not be resolved; filled with NULL. Consider enabling REPLICA IDENTITY FULL or `toast_fallback: lookup`."
+            );
+        }
+    }
+}
+
+async fn clickhouse_fill(
+    ch_connection: &adapter::clickhouse::ClickhouseConnection,
+    ch_config: &crate::config::ClickHouseConfig,
+    table_name: &str,
+    pg_columns: &[PostgresColumn],
+    ch_columns: &[ClickhouseColumn],
+    pk_row_indexes: &[usize],
+    rows: &mut [PostgresCopyRow],
+) -> Result<(), Errors> {
+    // Union of column indexes still Unchanged across the batch.
+    let mut unresolved_col_indexes: std::collections::BTreeSet<usize> = Default::default();
+    for row in rows.iter() {
+        for (j, v) in row.columns.iter().enumerate() {
+            if matches!(v, PgOutputValue::Unchanged) {
+                unresolved_col_indexes.insert(j);
+            }
+        }
+    }
+    if unresolved_col_indexes.is_empty() {
+        return Ok(());
+    }
+
+    // Map row-array index -> column name (source Postgres columns are 1-indexed on column_index).
+    let mut col_name_by_row_idx: HashMap<usize, &str> = HashMap::new();
+    for c in pg_columns {
+        col_name_by_row_idx.insert((c.column_index - 1) as usize, c.column_name.as_str());
+    }
+
+    let pk_column_names: Vec<&str> = pk_row_indexes
+        .iter()
+        .map(|i| *col_name_by_row_idx.get(i).unwrap_or(&""))
+        .collect();
+    if pk_column_names.iter().any(|n| n.is_empty()) {
+        return Err(Errors::DatabaseQueryError(format!(
+            "TOAST resolver: primary key column name missing for {table_name}"
+        )));
+    }
+
+    // Collect distinct PK tuples that still have unresolved columns.
+    let mut distinct_pks: HashMap<String, Vec<&PgOutputValue>> = HashMap::new();
+    for row in rows.iter() {
+        let has_unchanged = row
+            .columns
+            .iter()
+            .any(|v| matches!(v, PgOutputValue::Unchanged));
+        if !has_unchanged {
+            continue;
+        }
+        let key = pk_signature(row, pk_row_indexes);
+        if distinct_pks.contains_key(&key) {
+            continue;
+        }
+        let pk_values: Vec<&PgOutputValue> = pk_row_indexes
+            .iter()
+            .map(|&i| row.columns.get(i).unwrap_or(&PgOutputValue::Null))
+            .collect();
+        distinct_pks.insert(key, pk_values);
+    }
+    if distinct_pks.is_empty() {
+        return Ok(());
+    }
+
+    // Render each PK value as a ClickHouse literal.
+    let pk_ch_columns: Vec<&ClickhouseColumn> = pk_column_names
+        .iter()
+        .map(|n| {
+            ch_columns
+                .iter()
+                .find(|c| c.column_name.as_str() == *n)
+                .expect("primary key column must exist in ClickHouse table")
+        })
+        .collect();
+
+    let mut tuple_literals: Vec<String> = Vec::with_capacity(distinct_pks.len());
+    for pk_values in distinct_pks.values() {
+        let parts: Vec<String> = pk_values
+            .iter()
+            .enumerate()
+            .map(|(i, v)| pk_ch_columns[i].to_clickhouse_value((*v).clone()))
+            .collect();
+        tuple_literals.push(format!("({})", parts.join(", ")));
+    }
+
+    // Ordered list of columns to SELECT: PK first, then unresolved columns.
+    let missing_col_names: Vec<&str> = unresolved_col_indexes
+        .iter()
+        .map(|i| *col_name_by_row_idx.get(i).unwrap_or(&""))
+        .collect();
+    if missing_col_names.iter().any(|n| n.is_empty()) {
+        return Err(Errors::DatabaseQueryError(format!(
+            "TOAST resolver: source column name missing for {table_name}"
+        )));
+    }
+
+    let select_expressions: Vec<String> = pk_column_names
+        .iter()
+        .chain(missing_col_names.iter())
+        .map(|n| format!("toString(`{n}`) AS `{n}`"))
+        .collect();
+
+    let pk_tuple_expr = pk_column_names
+        .iter()
+        .map(|n| format!("`{n}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let query = format!(
+        "SELECT {select} FROM {db}.{table} FINAL WHERE ({pk_tuple}) IN ({tuples})",
+        select = select_expressions.join(", "),
+        db = ch_config.connection.database,
+        table = table_name,
+        pk_tuple = pk_tuple_expr,
+        tuples = tuple_literals.join(", "),
+    );
+
+    let fetched = ch_connection.fetch_string_rows(&query).await?;
+
+    // Build a map: pk_key -> HashMap<col_row_idx, PgOutputValue>
+    // Determine which missing columns are array-typed on the ClickHouse side so
+    // the fetched (already CH-formatted) literal can be emitted verbatim on
+    // re-INSERT, avoiding PG-vs-CH array-format mismatch.
+    let missing_is_array: Vec<bool> = missing_col_names
+        .iter()
+        .map(|name| {
+            ch_columns
+                .iter()
+                .find(|c| c.column_name.as_str() == *name)
+                .map(|c| is_clickhouse_array_type(&c.data_type))
+                .unwrap_or(false)
+        })
+        .collect();
+
+    let pk_count = pk_column_names.len();
+    let mut fetched_by_pk: HashMap<String, HashMap<usize, PgOutputValue>> = HashMap::new();
+    for row in fetched {
+        if row.len() < pk_count {
+            continue;
+        }
+        let pk_cells = &row[..pk_count];
+        let key = pk_cells
+            .iter()
+            .map(|c| match c {
+                Some(s) => format!("T:{s}"),
+                None => "N:".to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("|");
+        let mut col_map: HashMap<usize, PgOutputValue> = HashMap::new();
+        for (offset, missing_idx) in unresolved_col_indexes.iter().enumerate() {
+            let cell = row.get(pk_count + offset).and_then(Clone::clone);
+            let value = match cell {
+                None => PgOutputValue::Null,
+                Some(s) if missing_is_array[offset] => PgOutputValue::ClickhouseLiteral(s),
+                Some(s) => PgOutputValue::Text(s),
+            };
+            col_map.insert(*missing_idx, value);
+        }
+        fetched_by_pk.insert(key, col_map);
+    }
+
+    // Fill each row's Unchanged from fetched values.
+    for row in rows.iter_mut() {
+        let key = pk_signature(row, pk_row_indexes);
+        let Some(col_map) = fetched_by_pk.get(&key) else {
+            continue;
+        };
+        for (j, value) in row.columns.iter_mut().enumerate() {
+            if matches!(value, PgOutputValue::Unchanged)
+                && let Some(v) = col_map.get(&j)
+            {
+                *value = v.clone();
+            }
+        }
+    }
+
+    Ok(())
 }
 
 pub struct BatchWriteEntry<'a> {
