@@ -788,6 +788,10 @@ pub async fn run_postgres_pipe(config: Configuraion) {
     }
 }
 
+/// Maximum tuples per generated `IN` list. Keeps SQL well below ClickHouse's
+/// default `max_query_size` (256 KiB) even with wide composite PKs.
+const TOAST_LOOKUP_CHUNK_SIZE: usize = 1000;
+
 async fn resolve_toast_unchanged(
     ch_connection: &adapter::clickhouse::ClickhouseConnection,
     ch_config: &crate::config::ClickHouseConfig,
@@ -804,6 +808,15 @@ async fn resolve_toast_unchanged(
         .map(|c| (c.column_index - 1) as usize)
         .collect();
 
+    // Parallel flags: should the k-th PK column be normalized via
+    // `format_date_time` so pgoutput text (`2025-08-18 05:16:08.4+00`) matches
+    // CH `toString(DateTime)` (`2025-08-18 05:16:08`) during key comparison.
+    let pk_normalize_temporal: Vec<bool> = pg_columns
+        .iter()
+        .filter(|c| c.is_primary_key)
+        .map(is_temporal_pg_type)
+        .collect();
+
     // If there is no primary key we cannot uniquely look up rows —
     // batch-local fill is still meaningful only when we can key by something,
     // so skip and let final NULL-fallback run.
@@ -812,7 +825,7 @@ async fn resolve_toast_unchanged(
         return Ok(());
     }
 
-    batch_local_fill(&mut batch.rows, &pk_row_indexes);
+    batch_local_fill(&mut batch.rows, &pk_row_indexes, &pk_normalize_temporal);
 
     let still_unresolved = batch
         .rows
@@ -827,6 +840,7 @@ async fn resolve_toast_unchanged(
             pg_columns,
             ch_columns,
             &pk_row_indexes,
+            &pk_normalize_temporal,
             &mut batch.rows,
         )
         .await?;
@@ -836,10 +850,14 @@ async fn resolve_toast_unchanged(
     Ok(())
 }
 
-fn batch_local_fill(rows: &mut [PostgresCopyRow], pk_row_indexes: &[usize]) {
-    let mut last_by_pk: HashMap<String, Vec<PgOutputValue>> = HashMap::new();
+fn batch_local_fill(
+    rows: &mut [PostgresCopyRow],
+    pk_row_indexes: &[usize],
+    pk_normalize_temporal: &[bool],
+) {
+    let mut last_by_pk: HashMap<Vec<String>, Vec<PgOutputValue>> = HashMap::new();
     for row in rows.iter_mut() {
-        let pk_key = pk_signature(row, pk_row_indexes);
+        let pk_key = pk_signature(row, pk_row_indexes, pk_normalize_temporal);
         if let Some(prev) = last_by_pk.get(&pk_key) {
             for (j, value) in row.columns.iter_mut().enumerate() {
                 if matches!(value, PgOutputValue::Unchanged)
@@ -854,19 +872,61 @@ fn batch_local_fill(rows: &mut [PostgresCopyRow], pk_row_indexes: &[usize]) {
     }
 }
 
-fn pk_signature(row: &PostgresCopyRow, pk_row_indexes: &[usize]) -> String {
+fn pk_signature(
+    row: &PostgresCopyRow,
+    pk_row_indexes: &[usize],
+    pk_normalize_temporal: &[bool],
+) -> Vec<String> {
     pk_row_indexes
         .iter()
-        .map(|&i| match row.columns.get(i) {
-            Some(PgOutputValue::Text(s)) => format!("T:{s}"),
-            Some(PgOutputValue::Null) => "N:".to_string(),
-            Some(PgOutputValue::Binary(b)) => format!("B:{}", hex_lower(b)),
-            Some(PgOutputValue::Unchanged) => "U:".to_string(),
-            Some(PgOutputValue::ClickhouseLiteral(s)) => format!("L:{s}"),
-            Some(PgOutputValue::Unit) | None => "-:".to_string(),
+        .enumerate()
+        .map(|(k, &i)| {
+            let normalize = pk_normalize_temporal.get(k).copied().unwrap_or(false);
+            match row.columns.get(i) {
+                Some(PgOutputValue::Text(s)) => {
+                    let v = if normalize {
+                        PgOutputValue::format_date_time(s)
+                    } else {
+                        s.clone()
+                    };
+                    format!("T:{v}")
+                }
+                Some(PgOutputValue::Null) => "N:".to_string(),
+                Some(PgOutputValue::Binary(b)) => format!("B:{}", hex_lower(b)),
+                Some(PgOutputValue::Unchanged) => "U:".to_string(),
+                Some(PgOutputValue::ClickhouseLiteral(s)) => format!("L:{s}"),
+                Some(PgOutputValue::Unit) | None => "-:".to_string(),
+            }
         })
-        .collect::<Vec<_>>()
-        .join("|")
+        .collect()
+}
+
+/// Produces the same key shape as `pk_signature` from TSV cells returned by
+/// ClickHouse (`toString(pk)` columns). Temporal columns pass through
+/// `format_date_time` so keys match pgoutput-sourced signatures.
+fn pk_signature_from_tsv(cells: &[Option<String>], pk_normalize_temporal: &[bool]) -> Vec<String> {
+    cells
+        .iter()
+        .enumerate()
+        .map(|(k, cell)| {
+            let normalize = pk_normalize_temporal.get(k).copied().unwrap_or(false);
+            match cell {
+                Some(s) => {
+                    let v = if normalize {
+                        PgOutputValue::format_date_time(s)
+                    } else {
+                        s.clone()
+                    };
+                    format!("T:{v}")
+                }
+                None => "N:".to_string(),
+            }
+        })
+        .collect()
+}
+
+fn is_temporal_pg_type(column: &PostgresColumn) -> bool {
+    matches!(column.data_type.as_str(), "timestamp" | "timestamptz")
 }
 
 fn is_clickhouse_array_type(data_type: &str) -> bool {
@@ -882,22 +942,30 @@ fn hex_lower(bytes: &[u8]) -> String {
 }
 
 fn null_fill_leftovers(rows: &mut [PostgresCopyRow], table_name: &str) {
+    use std::collections::BTreeMap;
+    let mut col_counts: BTreeMap<usize, usize> = BTreeMap::new();
+    let mut affected_rows = 0_usize;
     for row in rows.iter_mut() {
-        let mut leftover_indexes = Vec::new();
+        let mut row_had_leftover = false;
         for (j, value) in row.columns.iter_mut().enumerate() {
             if matches!(value, PgOutputValue::Unchanged) {
                 *value = PgOutputValue::Null;
-                leftover_indexes.push(j);
+                *col_counts.entry(j).or_insert(0) += 1;
+                row_had_leftover = true;
             }
         }
-        if !leftover_indexes.is_empty() {
-            log::warn!(
-                "TOAST: Unchanged columns at indexes {leftover_indexes:?} for table {table_name} could not be resolved; filled with NULL. Consider enabling REPLICA IDENTITY FULL or `toast_fallback: lookup`."
-            );
+        if row_had_leftover {
+            affected_rows += 1;
         }
+    }
+    if affected_rows > 0 {
+        log::warn!(
+            "TOAST: {affected_rows} row(s) in table {table_name} had Unchanged columns that could not be resolved; filled with NULL. Per-column counts: {col_counts:?}. Consider enabling REPLICA IDENTITY FULL or `toast_fallback: lookup`."
+        );
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn clickhouse_fill(
     ch_connection: &adapter::clickhouse::ClickhouseConnection,
     ch_config: &crate::config::ClickHouseConfig,
@@ -905,6 +973,7 @@ async fn clickhouse_fill(
     pg_columns: &[PostgresColumn],
     ch_columns: &[ClickhouseColumn],
     pk_row_indexes: &[usize],
+    pk_normalize_temporal: &[bool],
     rows: &mut [PostgresCopyRow],
 ) -> Result<(), Errors> {
     // Union of column indexes still Unchanged across the batch.
@@ -937,7 +1006,7 @@ async fn clickhouse_fill(
     }
 
     // Collect distinct PK tuples that still have unresolved columns.
-    let mut distinct_pks: HashMap<String, Vec<&PgOutputValue>> = HashMap::new();
+    let mut distinct_pks: HashMap<Vec<String>, Vec<PgOutputValue>> = HashMap::new();
     for row in rows.iter() {
         let has_unchanged = row
             .columns
@@ -946,13 +1015,13 @@ async fn clickhouse_fill(
         if !has_unchanged {
             continue;
         }
-        let key = pk_signature(row, pk_row_indexes);
+        let key = pk_signature(row, pk_row_indexes, pk_normalize_temporal);
         if distinct_pks.contains_key(&key) {
             continue;
         }
-        let pk_values: Vec<&PgOutputValue> = pk_row_indexes
+        let pk_values: Vec<PgOutputValue> = pk_row_indexes
             .iter()
-            .map(|&i| row.columns.get(i).unwrap_or(&PgOutputValue::Null))
+            .map(|&i| row.columns.get(i).cloned().unwrap_or(PgOutputValue::Null))
             .collect();
         distinct_pks.insert(key, pk_values);
     }
@@ -960,25 +1029,15 @@ async fn clickhouse_fill(
         return Ok(());
     }
 
-    // Render each PK value as a ClickHouse literal.
-    let pk_ch_columns: Vec<&ClickhouseColumn> = pk_column_names
-        .iter()
-        .map(|n| {
-            ch_columns
-                .iter()
-                .find(|c| c.column_name.as_str() == *n)
-                .expect("primary key column must exist in ClickHouse table")
-        })
-        .collect();
-
-    let mut tuple_literals: Vec<String> = Vec::with_capacity(distinct_pks.len());
-    for pk_values in distinct_pks.values() {
-        let parts: Vec<String> = pk_values
-            .iter()
-            .enumerate()
-            .map(|(i, v)| pk_ch_columns[i].to_clickhouse_value((*v).clone()))
-            .collect();
-        tuple_literals.push(format!("({})", parts.join(", ")));
+    // Resolve CH columns for PKs (used to render typed literals in the IN list).
+    let mut pk_ch_columns: Vec<&ClickhouseColumn> = Vec::with_capacity(pk_column_names.len());
+    for name in &pk_column_names {
+        let Some(c) = ch_columns.iter().find(|c| c.column_name.as_str() == *name) else {
+            return Err(Errors::DatabaseQueryError(format!(
+                "TOAST resolver: primary key column `{name}` not found in ClickHouse table {table_name}"
+            )));
+        };
+        pk_ch_columns.push(c);
     }
 
     // Ordered list of columns to SELECT: PK first, then unresolved columns.
@@ -992,6 +1051,19 @@ async fn clickhouse_fill(
         )));
     }
 
+    // Detect array-typed missing columns so fetched (CH-formatted) literals can
+    // be emitted verbatim on re-INSERT.
+    let missing_is_array: Vec<bool> = missing_col_names
+        .iter()
+        .map(|name| {
+            ch_columns
+                .iter()
+                .find(|c| c.column_name.as_str() == *name)
+                .map(|c| is_clickhouse_array_type(&c.data_type))
+                .unwrap_or(false)
+        })
+        .collect();
+
     let select_expressions: Vec<String> = pk_column_names
         .iter()
         .chain(missing_col_names.iter())
@@ -1004,63 +1076,62 @@ async fn clickhouse_fill(
         .collect::<Vec<_>>()
         .join(", ");
 
-    let query = format!(
-        "SELECT {select} FROM {db}.{table} FINAL WHERE ({pk_tuple}) IN ({tuples})",
-        select = select_expressions.join(", "),
-        db = ch_config.connection.database,
-        table = table_name,
-        pk_tuple = pk_tuple_expr,
-        tuples = tuple_literals.join(", "),
-    );
-
-    let fetched = ch_connection.fetch_string_rows(&query).await?;
-
-    // Build a map: pk_key -> HashMap<col_row_idx, PgOutputValue>
-    // Determine which missing columns are array-typed on the ClickHouse side so
-    // the fetched (already CH-formatted) literal can be emitted verbatim on
-    // re-INSERT, avoiding PG-vs-CH array-format mismatch.
-    let missing_is_array: Vec<bool> = missing_col_names
-        .iter()
-        .map(|name| {
-            ch_columns
-                .iter()
-                .find(|c| c.column_name.as_str() == *name)
-                .map(|c| is_clickhouse_array_type(&c.data_type))
-                .unwrap_or(false)
-        })
-        .collect();
+    // Render tuple literals once (shared across chunks).
+    let mut keyed_tuples: Vec<(Vec<String>, String)> = Vec::with_capacity(distinct_pks.len());
+    for (key, pk_values) in distinct_pks {
+        let parts: Vec<String> = pk_values
+            .iter()
+            .enumerate()
+            .map(|(i, v)| pk_ch_columns[i].to_clickhouse_value(v.clone()))
+            .collect();
+        keyed_tuples.push((key, format!("({})", parts.join(", "))));
+    }
 
     let pk_count = pk_column_names.len();
-    let mut fetched_by_pk: HashMap<String, HashMap<usize, PgOutputValue>> = HashMap::new();
-    for row in fetched {
-        if row.len() < pk_count {
-            continue;
-        }
-        let pk_cells = &row[..pk_count];
-        let key = pk_cells
+    let mut fetched_by_pk: HashMap<Vec<String>, HashMap<usize, PgOutputValue>> = HashMap::new();
+
+    // Chunk the IN list so one SELECT stays well below CH's `max_query_size`.
+    for chunk in keyed_tuples.chunks(TOAST_LOOKUP_CHUNK_SIZE) {
+        let tuples_sql = chunk
             .iter()
-            .map(|c| match c {
-                Some(s) => format!("T:{s}"),
-                None => "N:".to_string(),
-            })
+            .map(|(_, lit)| lit.as_str())
             .collect::<Vec<_>>()
-            .join("|");
-        let mut col_map: HashMap<usize, PgOutputValue> = HashMap::new();
-        for (offset, missing_idx) in unresolved_col_indexes.iter().enumerate() {
-            let cell = row.get(pk_count + offset).and_then(Clone::clone);
-            let value = match cell {
-                None => PgOutputValue::Null,
-                Some(s) if missing_is_array[offset] => PgOutputValue::ClickhouseLiteral(s),
-                Some(s) => PgOutputValue::Text(s),
-            };
-            col_map.insert(*missing_idx, value);
+            .join(", ");
+
+        let query = format!(
+            "SELECT {select} FROM {db}.{table} FINAL WHERE ({pk_tuple}) IN ({tuples})",
+            select = select_expressions.join(", "),
+            db = ch_config.connection.database,
+            table = table_name,
+            pk_tuple = pk_tuple_expr,
+            tuples = tuples_sql,
+        );
+
+        let fetched = ch_connection.fetch_string_rows(&query).await?;
+
+        for row in fetched {
+            if row.len() < pk_count {
+                continue;
+            }
+            let pk_cells = &row[..pk_count];
+            let key = pk_signature_from_tsv(pk_cells, pk_normalize_temporal);
+            let mut col_map: HashMap<usize, PgOutputValue> = HashMap::new();
+            for (offset, missing_idx) in unresolved_col_indexes.iter().enumerate() {
+                let cell = row.get(pk_count + offset).and_then(Clone::clone);
+                let value = match cell {
+                    None => PgOutputValue::Null,
+                    Some(s) if missing_is_array[offset] => PgOutputValue::ClickhouseLiteral(s),
+                    Some(s) => PgOutputValue::Text(s),
+                };
+                col_map.insert(*missing_idx, value);
+            }
+            fetched_by_pk.insert(key, col_map);
         }
-        fetched_by_pk.insert(key, col_map);
     }
 
     // Fill each row's Unchanged from fetched values.
     for row in rows.iter_mut() {
-        let key = pk_signature(row, pk_row_indexes);
+        let key = pk_signature(row, pk_row_indexes, pk_normalize_temporal);
         let Some(col_map) = fetched_by_pk.get(&key) else {
             continue;
         };
@@ -1107,4 +1178,114 @@ fn extract_postgres_primary_key(row: &PostgresCopyRow, columns: &[PostgresColumn
         })
         .collect::<Vec<_>>()
         .join("|")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text(s: &str) -> PgOutputValue {
+        PgOutputValue::Text(s.to_string())
+    }
+
+    fn row(cols: Vec<PgOutputValue>) -> PostgresCopyRow {
+        PostgresCopyRow { columns: cols }
+    }
+
+    #[test]
+    fn is_clickhouse_array_type_matches_array_and_nullable_array() {
+        assert!(is_clickhouse_array_type("Array(Int32)"));
+        assert!(is_clickhouse_array_type("Array(String)"));
+        assert!(is_clickhouse_array_type("Nullable(Array(String))"));
+        assert!(!is_clickhouse_array_type("String"));
+        assert!(!is_clickhouse_array_type("Nullable(String)"));
+        assert!(!is_clickhouse_array_type("ArrayLike"));
+    }
+
+    #[test]
+    fn pk_signature_distinguishes_pipe_colliding_pairs() {
+        // Two-column PK, both Text. If pk_signature were a joined string with
+        // "|" as the separator, these two rows would collide.
+        let a = row(vec![text("a|T:b"), text("c")]);
+        let b = row(vec![text("a"), text("b|T:c")]);
+        let indexes = [0usize, 1usize];
+        let normalize = [false, false];
+        assert_ne!(
+            pk_signature(&a, &indexes, &normalize),
+            pk_signature(&b, &indexes, &normalize)
+        );
+    }
+
+    #[test]
+    fn pk_signature_normalizes_temporal_columns() {
+        let r = row(vec![text("2025-08-18 05:16:08.490845+00")]);
+        let indexes = [0usize];
+        let temporal = pk_signature(&r, &indexes, &[true]);
+        let raw = pk_signature(&r, &indexes, &[false]);
+        assert_eq!(temporal, vec!["T:2025-08-18 05:16:08".to_string()]);
+        assert_eq!(
+            raw,
+            vec!["T:2025-08-18 05:16:08.490845+00".to_string()]
+        );
+    }
+
+    #[test]
+    fn pk_signature_from_tsv_matches_pgoutput_signature_for_datetime() {
+        // CH toString(DateTime) emits already-normalized form; pgoutput sends
+        // the fractional+timezone form. Both must produce the same key.
+        let pg_row = row(vec![text("2025-08-18 05:16:08.490845+00")]);
+        let indexes = [0usize];
+        let normalize = [true];
+        let from_pg = pk_signature(&pg_row, &indexes, &normalize);
+        let from_ch = pk_signature_from_tsv(
+            &[Some("2025-08-18 05:16:08".to_string())],
+            &normalize,
+        );
+        assert_eq!(from_pg, from_ch);
+    }
+
+    #[test]
+    fn batch_local_fill_carries_prior_full_row_into_toast_update() {
+        // Columns: [id (pk), big_text]
+        // Row 1: INSERT {id=1, big_text="hello"}
+        // Row 2: UPDATE {id=1, big_text=Unchanged}  -> should fill "hello"
+        let mut rows = vec![
+            row(vec![text("1"), text("hello")]),
+            row(vec![text("1"), PgOutputValue::Unchanged]),
+        ];
+        batch_local_fill(&mut rows, &[0], &[false]);
+        assert!(matches!(&rows[1].columns[1], PgOutputValue::Text(s) if s == "hello"));
+    }
+
+    #[test]
+    fn batch_local_fill_leaves_unchanged_when_no_prior_row() {
+        let mut rows = vec![row(vec![text("1"), PgOutputValue::Unchanged])];
+        batch_local_fill(&mut rows, &[0], &[false]);
+        assert!(matches!(rows[0].columns[1], PgOutputValue::Unchanged));
+    }
+
+    #[test]
+    fn batch_local_fill_does_not_cross_pks() {
+        let mut rows = vec![
+            row(vec![text("1"), text("one")]),
+            row(vec![text("2"), PgOutputValue::Unchanged]),
+        ];
+        batch_local_fill(&mut rows, &[0], &[false]);
+        // PK 2 should not inherit "one" from PK 1.
+        assert!(matches!(rows[1].columns[1], PgOutputValue::Unchanged));
+    }
+
+    #[test]
+    fn batch_local_fill_chains_through_multiple_updates() {
+        // Row 1: INSERT val="v1"
+        // Row 2: UPDATE val="v2"
+        // Row 3: UPDATE val=Unchanged  -> should fill from row 2 ("v2"), not row 1
+        let mut rows = vec![
+            row(vec![text("1"), text("v1")]),
+            row(vec![text("1"), text("v2")]),
+            row(vec![text("1"), PgOutputValue::Unchanged]),
+        ];
+        batch_local_fill(&mut rows, &[0], &[false]);
+        assert!(matches!(&rows[2].columns[1], PgOutputValue::Text(s) if s == "v2"));
+    }
 }

@@ -639,4 +639,41 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn clickhouse_literal_passes_through_every_renderer() {
+        use crate::adapter::IntoClickhouseValue;
+
+        let cases: &[&str] = &[
+            "[1,2,3]",
+            "['a','b']",
+            "[1,NULL,3]",
+            "[[1,2],[3,4]]",
+            "42",
+            "'hello'",
+            "toDate('2025-01-01')",
+        ];
+        for s in cases {
+            let make = || PgOutputValue::ClickhouseLiteral(s.to_string());
+            assert_eq!(make().to_integer(), *s);
+            assert_eq!(make().to_real(), *s);
+            assert_eq!(make().to_bool(), *s);
+            assert_eq!(make().to_string(), *s);
+            assert_eq!(make().to_date(), *s);
+            assert_eq!(make().to_datetime(), *s);
+            assert_eq!(make().to_time(), *s);
+            assert_eq!(make().to_array(), *s);
+            assert_eq!(make().to_string_array(), *s);
+            assert_eq!(make().unknown_value(), *s);
+        }
+    }
+
+    #[test]
+    fn clickhouse_literal_is_not_null_but_into_null_resets_it() {
+        use crate::adapter::IntoClickhouseValue;
+        let v = PgOutputValue::ClickhouseLiteral("[1,2,3]".to_string());
+        assert!(!v.is_null());
+        let nulled = v.into_null();
+        assert!(matches!(nulled, PgOutputValue::Null));
+    }
 }
