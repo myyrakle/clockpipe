@@ -52,6 +52,14 @@ pub struct PostgresConfig {
     pub publication_name: String,
     #[serde(default = "default::postgres::replication_slot_name")]
     pub replication_slot_name: String,
+    #[serde(default)]
+    pub toast_fallback: Option<ToastFallback>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub enum ToastFallback {
+    #[serde(rename = "lookup")]
+    Lookup,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

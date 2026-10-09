@@ -76,10 +76,17 @@ pub enum PgOutputValue {
     Unchanged,
     Text(String),
     Binary(Vec<u8>),
+    /// A value already formatted as a ClickHouse SQL literal. Emitted verbatim
+    /// by `IntoClickhouseValue` so array values fetched from ClickHouse during
+    /// TOAST fallback can round-trip without re-parsing.
+    ClickhouseLiteral(String),
 }
 
 impl IntoClickhouseValue for PgOutputValue {
     fn to_integer(self) -> String {
+        if let PgOutputValue::ClickhouseLiteral(s) = self {
+            return s;
+        }
         let text = self.text_or("0".to_string());
         if text.trim().parse::<i64>().is_ok() || text.trim().parse::<u64>().is_ok() {
             text
@@ -89,6 +96,9 @@ impl IntoClickhouseValue for PgOutputValue {
     }
 
     fn to_real(self) -> String {
+        if let PgOutputValue::ClickhouseLiteral(s) = self {
+            return s;
+        }
         let text = self.text_or("0.0".to_string());
         if text.trim().parse::<f64>().is_ok() {
             text
@@ -98,14 +108,23 @@ impl IntoClickhouseValue for PgOutputValue {
     }
 
     fn to_bool(self) -> String {
+        if let PgOutputValue::ClickhouseLiteral(s) = self {
+            return s;
+        }
         Self::parse_bool(&self.text_or("false".to_string()))
     }
 
     fn to_string(self) -> String {
+        if let PgOutputValue::ClickhouseLiteral(s) = self {
+            return s;
+        }
         format!("'{}'", Self::escape_string(&self.text_or("".to_string())))
     }
 
     fn to_date(self) -> String {
+        if let PgOutputValue::ClickhouseLiteral(s) = self {
+            return s;
+        }
         format!(
             "toDate('{}')",
             Self::format_date_time(&self.text_or("current_date()".to_string()))
@@ -113,6 +132,9 @@ impl IntoClickhouseValue for PgOutputValue {
     }
 
     fn to_datetime(self) -> String {
+        if let PgOutputValue::ClickhouseLiteral(s) = self {
+            return s;
+        }
         format!(
             "toDateTime('{}')",
             Self::format_date_time(&self.text_or("now()".to_string()))
@@ -120,6 +142,9 @@ impl IntoClickhouseValue for PgOutputValue {
     }
 
     fn to_time(self) -> String {
+        if let PgOutputValue::ClickhouseLiteral(s) = self {
+            return s;
+        }
         format!(
             "toTime('{}')",
             Self::format_date_time(&self.text_or("now()".to_string()))
@@ -127,10 +152,16 @@ impl IntoClickhouseValue for PgOutputValue {
     }
 
     fn to_array(self) -> String {
+        if let PgOutputValue::ClickhouseLiteral(s) = self {
+            return s;
+        }
         format!("[{}]", self.array_value().unwrap_or_default(),)
     }
 
     fn to_string_array(self) -> String {
+        if let PgOutputValue::ClickhouseLiteral(s) = self {
+            return s;
+        }
         let text = self.array_value().unwrap_or_default();
         let array_values = Self::parse_string_array(&text)
             .into_iter()
@@ -145,6 +176,9 @@ impl IntoClickhouseValue for PgOutputValue {
     }
 
     fn unknown_value(self) -> String {
+        if let PgOutputValue::ClickhouseLiteral(s) = self {
+            return s;
+        }
         format!("'{}'", Self::escape_string(&self.text_or("".to_string())))
     }
 
@@ -514,38 +548,17 @@ fn parse_pg_output_write(message_type: MessageType, bytes: &[u8]) -> errors::Res
         }
     }
 
-    // Fill Unchanged columns from old_values (TOAST fallback)
+    // Fill Unchanged columns from old_values (REPLICA IDENTITY FULL).
+    // Any Unchanged left behind here is resolved downstream in the sync loop
+    // (batch-local fill and, if configured, ClickHouse lookup).
     if let Some(old_values) = &pg_output.old_values {
         for (i, value) in pg_output.payload.iter_mut().enumerate() {
             if matches!(value, PgOutputValue::Unchanged) {
-                if let Some(old_value) = old_values.get(i) {
+                if let Some(old_value) = old_values.get(i)
+                    && !matches!(old_value, PgOutputValue::Unchanged)
+                {
                     *value = old_value.clone();
-                } else {
-                    log::warn!(
-                        "TOAST: Unchanged column at index {i} could not be resolved from old_values (relation_id={})",
-                        pg_output.relation_id
-                    );
-                    *value = PgOutputValue::Null;
                 }
-            }
-        }
-    } else {
-        let unresolved: Vec<usize> = pg_output
-            .payload
-            .iter()
-            .enumerate()
-            .filter(|(_, v)| matches!(v, PgOutputValue::Unchanged))
-            .map(|(i, _)| i)
-            .collect();
-
-        if !unresolved.is_empty() {
-            log::warn!(
-                "TOAST: Unchanged columns at indexes {:?} could not be resolved — no old_values available (relation_id={}). Consider enabling REPLICA IDENTITY FULL. Falling back to NULL.",
-                unresolved,
-                pg_output.relation_id
-            );
-            for i in unresolved {
-                pg_output.payload[i] = PgOutputValue::Null;
             }
         }
     }
@@ -625,5 +638,42 @@ mod tests {
                 test_case.input
             );
         }
+    }
+
+    #[test]
+    fn clickhouse_literal_passes_through_every_renderer() {
+        use crate::adapter::IntoClickhouseValue;
+
+        let cases: &[&str] = &[
+            "[1,2,3]",
+            "['a','b']",
+            "[1,NULL,3]",
+            "[[1,2],[3,4]]",
+            "42",
+            "'hello'",
+            "toDate('2025-01-01')",
+        ];
+        for s in cases {
+            let make = || PgOutputValue::ClickhouseLiteral(s.to_string());
+            assert_eq!(make().to_integer(), *s);
+            assert_eq!(make().to_real(), *s);
+            assert_eq!(make().to_bool(), *s);
+            assert_eq!(make().to_string(), *s);
+            assert_eq!(make().to_date(), *s);
+            assert_eq!(make().to_datetime(), *s);
+            assert_eq!(make().to_time(), *s);
+            assert_eq!(make().to_array(), *s);
+            assert_eq!(make().to_string_array(), *s);
+            assert_eq!(make().unknown_value(), *s);
+        }
+    }
+
+    #[test]
+    fn clickhouse_literal_is_not_null_but_into_null_resets_it() {
+        use crate::adapter::IntoClickhouseValue;
+        let v = PgOutputValue::ClickhouseLiteral("[1,2,3]".to_string());
+        assert!(!v.is_null());
+        let nulled = v.into_null();
+        assert!(matches!(nulled, PgOutputValue::Null));
     }
 }
