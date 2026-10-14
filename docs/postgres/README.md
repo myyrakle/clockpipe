@@ -69,6 +69,7 @@ ALTER TABLE [table_name] REPLICA IDENTITY FULL;
     "postgres": {
       "publication_name": "clockpipe_publication",
       "replication_slot_name": "clockpipe_slot",
+      "skip_missing_tables": false,
       "connection": {
         "host": "localhost",
         "port": 5432,
@@ -97,6 +98,7 @@ ALTER TABLE [table_name] REPLICA IDENTITY FULL;
 | :--------------------- | :----------------------------------------------------------------- | :------- | :-------------------- |
 | publication_name       | Publication name to use for CDC                                    | false    | clockpipe_publication |
 | replication_slot_name  | Replication slot name to use for CDC                               | false    | clockpipe_slot        |
+| skip_missing_tables    | Skip (with a warning) tables that do not exist in PostgreSQL instead of aborting. Tables are checked only at startup; if a skipped table is created later, restart the pipe to start its copy and CDC | false    | false                 |
 | connection             | PostgreSQL Database Connection Info                                | true     |                       |
 | tables                 | Tables to sync                                                     | true     |                       |
 | tables[].table_options | Table options. [Details](./../clickhouse/README.md)                | false    |                       |
