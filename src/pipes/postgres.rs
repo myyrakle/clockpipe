@@ -576,6 +576,12 @@ impl PostgresPipe {
             !missing_tables.contains(&format!("{}.{}", table.schema_name, table.table_name))
         });
 
+        if self.postgres_config.tables.is_empty() {
+            return Err(Errors::TableNotFoundError(format!(
+                "All configured tables do not exist in Postgres: {missing_tables:?}. No tables left to sync."
+            )));
+        }
+
         Ok(())
     }
 

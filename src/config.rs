@@ -55,7 +55,8 @@ pub struct PostgresConfig {
     #[serde(default)]
     pub toast_fallback: Option<ToastFallback>,
     /// If true, tables that do not exist in Postgres are skipped with a warning
-    /// instead of aborting the pipe.
+    /// instead of aborting the pipe. Tables are checked only at startup, so a skipped
+    /// table created later is not synced until the pipe is restarted.
     #[serde(default)]
     pub skip_missing_tables: bool,
 }
