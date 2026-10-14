@@ -128,6 +128,23 @@ impl PostgresConnection {
         Ok(std::mem::take(&mut result[0].0))
     }
 
+    pub async fn table_exists(&self, schema_name: &str, table_name: &str) -> errors::Result<bool> {
+        let (exists,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = $1 AND n.nspname = $2)"
+        )
+        .bind(table_name)
+        .bind(schema_name)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| {
+            errors::Errors::TableNotFoundError(format!(
+                "Failed to check existence of table {schema_name}.{table_name}: {e}"
+            ))
+        })?;
+
+        Ok(exists)
+    }
+
     pub async fn get_relation_id_by_table_name(
         &self,
         schema_name: &str,

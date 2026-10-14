@@ -54,6 +54,10 @@ pub struct PostgresConfig {
     pub replication_slot_name: String,
     #[serde(default)]
     pub toast_fallback: Option<ToastFallback>,
+    /// If true, tables that do not exist in Postgres are skipped with a warning
+    /// instead of aborting the pipe.
+    #[serde(default)]
+    pub skip_missing_tables: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

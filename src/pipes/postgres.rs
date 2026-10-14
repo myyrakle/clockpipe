@@ -110,6 +110,10 @@ impl IPipe for PostgresPipe {
     async fn initialize(&mut self) {
         log::info!("Initializing Postgres Pipe...");
 
+        self.check_missing_tables()
+            .await
+            .expect("Failed to check source tables");
+
         self.setup_publication()
             .await
             .expect("Failed to setup Postgres Pipe");
@@ -538,6 +542,43 @@ impl IPipe for PostgresPipe {
 }
 
 impl PostgresPipe {
+    /// Checks that every configured source table exists in Postgres.
+    /// Missing tables are dropped from the config when `skip_missing_tables` is set,
+    /// otherwise an error is returned.
+    async fn check_missing_tables(&mut self) -> Result<(), Errors> {
+        let mut missing_tables = Vec::new();
+
+        for table in &self.postgres_config.tables {
+            if !self
+                .postgres_connection
+                .table_exists(&table.schema_name, &table.table_name)
+                .await?
+            {
+                missing_tables.push(format!("{}.{}", table.schema_name, table.table_name));
+            }
+        }
+
+        if missing_tables.is_empty() {
+            return Ok(());
+        }
+
+        if !self.postgres_config.skip_missing_tables {
+            return Err(Errors::TableNotFoundError(format!(
+                "Tables do not exist in Postgres: {missing_tables:?}. Set `skip_missing_tables` to true to skip them."
+            )));
+        }
+
+        for table_name in &missing_tables {
+            log::warn!("Table {table_name} does not exist in Postgres, skipping it");
+        }
+
+        self.postgres_config.tables.retain(|table| {
+            !missing_tables.contains(&format!("{}.{}", table.schema_name, table.table_name))
+        });
+
+        Ok(())
+    }
+
     async fn setup_publication(&self) -> Result<(), Errors> {
         if !self.clickhouse_config.enable_sync_loop() {
             log::info!("Sync loop disabled. Not setting up publication and replication slot.");
