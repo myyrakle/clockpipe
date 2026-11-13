@@ -451,19 +451,27 @@ impl IPipe for MongoDBPipe {
 
             // 5. Delete rows in ClickHouse
             for (table_name, batch) in batch_delete_queue.iter() {
-                let delete_query = self.generate_delete_query(
+                let delete_queries = match self.generate_delete_queries(
                     &self.clickhouse_config,
                     &batch.table_info.clickhouse_columns,
                     &Vec::<MongoDBColumn>::new(), // MongoDB does not have a fixed schema, so we pass an empty slice here
                     table_name,
                     &batch.rows,
-                );
+                ) {
+                    Ok(delete_queries) => delete_queries,
+                    Err(error) => {
+                        log::error!("Failed to generate delete queries for {table_name}: {error}");
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            self.config.sleep_millis_when_write_failed,
+                        ))
+                        .await;
 
-                if !delete_query.is_empty() {
-                    if let Err(error) = self
-                        .clickhouse_connection
-                        .execute_query(&delete_query)
-                        .await
+                        continue 'SYNC_LOOP;
+                    }
+                };
+
+                for delete_query in delete_queries.iter() {
+                    if let Err(error) = self.clickhouse_connection.execute_query(delete_query).await
                     {
                         log::error!("Failed to execute delete query for {table_name}: {error}");
                         tokio::time::sleep(std::time::Duration::from_millis(

@@ -21,6 +21,7 @@ pub enum Errors {
     CopyTableFailed(String),
     CountTableRowsFailed(String),
     ResumeTokenParseError(String),
+    PrimaryKeyNotFound(String),
 }
 
 pub type Result<T> = std::result::Result<T, Errors>;
@@ -65,6 +66,7 @@ impl std::fmt::Display for Errors {
             Errors::CopyTableFailed(msg) => write!(f, "Failed to copy table data: {msg}"),
             Errors::CountTableRowsFailed(msg) => write!(f, "Failed to count table rows: {msg}"),
             Errors::ResumeTokenParseError(msg) => write!(f, "Failed to parse resume token: {msg}"),
+            Errors::PrimaryKeyNotFound(msg) => write!(f, "Primary key not found: {msg}"),
         }
     }
 }

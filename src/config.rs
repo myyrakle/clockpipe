@@ -132,6 +132,9 @@ pub mod default {
         pub fn index_granularity() -> u64 {
             INDEX_GRANULARITY
         }
+
+        /// Maximum number of rows deleted by a single `ALTER TABLE ... DELETE` mutation.
+        pub const DELETE_BATCH_SIZE: usize = 10_000;
     }
 
     pub mod mongodb {
