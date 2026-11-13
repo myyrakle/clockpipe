@@ -8,7 +8,9 @@ use crate::{
     adapter::clickhouse::{ClickhouseColumn, ClickhouseType},
     config::{
         ClickHouseConfig, ClickHouseTableOptions,
-        default::clickhouse::{INDEX_GRANULARITY, MIN_AGE_TO_FORCE_MERGE_SECONDS},
+        default::clickhouse::{
+            DELETE_BATCH_SIZE, INDEX_GRANULARITY, MIN_AGE_TO_FORCE_MERGE_SECONDS,
+        },
     },
 };
 
@@ -198,60 +200,77 @@ pub trait IntoClickhouse {
         insert_query
     }
 
-    fn generate_delete_query<IntoClickhouseColumnType, IntoClickhouseRowType>(
+    /// Generates `ALTER TABLE ... DELETE` queries for the given rows.
+    ///
+    /// Rows are split into chunks of `DELETE_BATCH_SIZE`, one query per chunk.
+    /// Keys are matched with `IN` instead of `(pk = v1) OR (pk = v2) OR ...`: the parser folds a
+    /// constant `IN` list into a single literal, so the AST stays small. A long `OR` chain makes
+    /// background mutation execution fail with `Query tree is too big` (max_expanded_ast_elements),
+    /// and a failed mutation blocks every later mutation on the same parts.
+    fn generate_delete_queries<IntoClickhouseColumnType, IntoClickhouseRowType>(
         &self,
         clickhouse_config: &ClickHouseConfig,
         clickhouse_columns: &[ClickhouseColumn],
         source_columns: &[IntoClickhouseColumnType],
         table_name: &str,
         rows: &[IntoClickhouseRowType],
-    ) -> String
+    ) -> Vec<String>
     where
         IntoClickhouseColumnType: IntoClickhouseColumn,
         IntoClickhouseRowType: IntoClickhouseRow,
     {
-        if rows.is_empty() {
-            return String::new();
-        }
-
-        let mut delete_query = format!(
-            "ALTER TABLE {}.{table_name} DELETE WHERE ",
-            clickhouse_config.connection.database
-        );
-
         let primary_key_columns: Vec<_> = clickhouse_columns
             .iter()
             .filter(|col| col.is_in_primary_key)
             .collect();
 
-        let mut conditions = vec![];
+        if rows.is_empty() || primary_key_columns.is_empty() {
+            return vec![];
+        }
 
-        for row in rows.iter() {
-            let mut conditions_per_row = vec![];
+        let key_expression = if primary_key_columns.len() == 1 {
+            primary_key_columns[0].column_name.clone()
+        } else {
+            let column_names: Vec<_> = primary_key_columns
+                .iter()
+                .map(|col| col.column_name.as_str())
+                .collect();
+            format!("({})", column_names.join(", "))
+        };
 
-            for clickhouse_column in primary_key_columns.iter() {
-                let raw_value: Option<_> =
-                    row.find_value_by_column_name(source_columns, &clickhouse_column.column_name);
+        let mut delete_queries = vec![];
 
-                let column_value =
-                    clickhouse_column.to_clickhouse_value(raw_value.unwrap_or_default());
+        for chunk in rows.chunks(DELETE_BATCH_SIZE) {
+            let mut keys = vec![];
 
-                conditions_per_row.push(format!(
-                    "{} = {}",
-                    clickhouse_column.column_name, column_value
-                ));
+            for row in chunk.iter() {
+                let mut key_values = vec![];
+
+                for clickhouse_column in primary_key_columns.iter() {
+                    let raw_value: Option<_> = row
+                        .find_value_by_column_name(source_columns, &clickhouse_column.column_name);
+
+                    let column_value =
+                        clickhouse_column.to_clickhouse_value(raw_value.unwrap_or_default());
+
+                    key_values.push(column_value);
+                }
+
+                if key_values.len() == 1 {
+                    keys.push(key_values.remove(0));
+                } else {
+                    keys.push(format!("({})", key_values.join(", ")));
+                }
             }
 
-            conditions.push(format!("({})", conditions_per_row.join(" AND ")));
+            delete_queries.push(format!(
+                "ALTER TABLE {}.{table_name} DELETE WHERE {key_expression} IN ({})",
+                clickhouse_config.connection.database,
+                keys.join(", ")
+            ));
         }
 
-        if conditions.is_empty() {
-            return String::new();
-        }
-
-        delete_query.push_str(&conditions.join(" OR "));
-
-        delete_query
+        delete_queries
     }
 }
 
@@ -266,4 +285,190 @@ pub fn deduplicate_rows_keeping_last<T>(rows: Vec<T>, key_fn: impl Fn(&T) -> Str
         .collect();
     result.reverse();
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        adapter::postgres::{PostgresColumn, PostgresCopyRow, pgoutput::PgOutputValue},
+        config::{ClickHouseConfig, ClickHouseConnectionConfig},
+    };
+
+    struct TestPipe;
+    impl IntoClickhouse for TestPipe {}
+
+    fn clickhouse_config() -> ClickHouseConfig {
+        ClickHouseConfig {
+            connection: ClickHouseConnectionConfig {
+                host: "localhost".to_string(),
+                port: 8123,
+                username: "default".to_string(),
+                password: String::new(),
+                database: "db".to_string(),
+                secure: false,
+            },
+            disable_sync_loop: false,
+            table_options: Default::default(),
+        }
+    }
+
+    fn postgres_column(index: i32, name: &str, data_type: &str, is_pk: bool) -> PostgresColumn {
+        PostgresColumn {
+            column_index: index,
+            column_name: name.to_string(),
+            data_type: data_type.to_string(),
+            length: -1,
+            nullable: false,
+            is_primary_key: is_pk,
+            comment: String::new(),
+        }
+    }
+
+    fn clickhouse_column(index: u64, name: &str, data_type: &str, is_pk: bool) -> ClickhouseColumn {
+        ClickhouseColumn {
+            column_index: index,
+            column_name: name.to_string(),
+            data_type: data_type.to_string(),
+            is_in_primary_key: is_pk,
+        }
+    }
+
+    fn row(values: &[&str]) -> PostgresCopyRow {
+        PostgresCopyRow {
+            columns: values
+                .iter()
+                .map(|v| PgOutputValue::Text(v.to_string()))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn delete_queries_use_in_list_for_single_primary_key() {
+        let source_columns = vec![
+            postgres_column(1, "id", "int8", true),
+            postgres_column(2, "name", "text", false),
+        ];
+        let clickhouse_columns = vec![
+            clickhouse_column(1, "id", "Int64", true),
+            clickhouse_column(2, "name", "String", false),
+        ];
+        let rows = vec![row(&["1", "a"]), row(&["2", "b"]), row(&["3", "c"])];
+
+        let queries = TestPipe.generate_delete_queries(
+            &clickhouse_config(),
+            &clickhouse_columns,
+            &source_columns,
+            "users",
+            &rows,
+        );
+
+        assert_eq!(
+            queries,
+            vec!["ALTER TABLE db.users DELETE WHERE id IN (1, 2, 3)".to_string()]
+        );
+    }
+
+    #[test]
+    fn delete_queries_escape_string_keys() {
+        let source_columns = vec![postgres_column(1, "code", "text", true)];
+        let clickhouse_columns = vec![clickhouse_column(1, "code", "String", true)];
+        let rows = vec![row(&["a'b"]), row(&["c\\d"])];
+
+        let queries = TestPipe.generate_delete_queries(
+            &clickhouse_config(),
+            &clickhouse_columns,
+            &source_columns,
+            "codes",
+            &rows,
+        );
+
+        assert_eq!(
+            queries,
+            vec![r"ALTER TABLE db.codes DELETE WHERE code IN ('a''b', 'c\\d')".to_string()]
+        );
+    }
+
+    #[test]
+    fn delete_queries_use_tuple_in_for_composite_primary_key() {
+        let source_columns = vec![
+            postgres_column(1, "tenant_id", "int8", true),
+            postgres_column(2, "id", "uuid", true),
+            postgres_column(3, "value", "text", false),
+        ];
+        let clickhouse_columns = vec![
+            clickhouse_column(1, "tenant_id", "Int64", true),
+            clickhouse_column(2, "id", "String", true),
+            clickhouse_column(3, "value", "String", false),
+        ];
+        let rows = vec![row(&["1", "u1", "x"]), row(&["2", "u2", "y"])];
+
+        let queries = TestPipe.generate_delete_queries(
+            &clickhouse_config(),
+            &clickhouse_columns,
+            &source_columns,
+            "items",
+            &rows,
+        );
+
+        assert_eq!(
+            queries,
+            vec![
+                "ALTER TABLE db.items DELETE WHERE (tenant_id, id) IN ((1, 'u1'), (2, 'u2'))"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn delete_queries_are_chunked_by_batch_size() {
+        let source_columns = vec![postgres_column(1, "id", "int8", true)];
+        let clickhouse_columns = vec![clickhouse_column(1, "id", "Int64", true)];
+        let total = DELETE_BATCH_SIZE * 2 + 5;
+        let ids: Vec<String> = (0..total).map(|i| i.to_string()).collect();
+        let rows: Vec<_> = ids.iter().map(|id| row(&[id.as_str()])).collect();
+
+        let queries = TestPipe.generate_delete_queries(
+            &clickhouse_config(),
+            &clickhouse_columns,
+            &source_columns,
+            "events",
+            &rows,
+        );
+
+        assert_eq!(queries.len(), 3);
+        let counts: Vec<usize> = queries
+            .iter()
+            .map(|q| q.matches(", ").count() + 1)
+            .collect();
+        assert_eq!(counts, vec![DELETE_BATCH_SIZE, DELETE_BATCH_SIZE, 5]);
+        assert!(queries.iter().all(|q| !q.contains(" OR ")));
+        assert!(queries[2].ends_with("IN (20000, 20001, 20002, 20003, 20004)"));
+    }
+
+    #[test]
+    fn delete_queries_empty_without_rows_or_primary_key() {
+        let source_columns = vec![postgres_column(1, "id", "int8", false)];
+        let no_pk = vec![clickhouse_column(1, "id", "Int64", false)];
+        let with_pk = vec![clickhouse_column(1, "id", "Int64", true)];
+        let rows = vec![row(&["1"])];
+        let no_rows: Vec<PostgresCopyRow> = vec![];
+
+        assert!(
+            TestPipe
+                .generate_delete_queries(&clickhouse_config(), &no_pk, &source_columns, "t", &rows)
+                .is_empty()
+        );
+        assert!(
+            TestPipe
+                .generate_delete_queries(
+                    &clickhouse_config(),
+                    &with_pk,
+                    &source_columns,
+                    "t",
+                    &no_rows
+                )
+                .is_empty()
+        );
+    }
 }
