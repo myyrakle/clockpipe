@@ -12,6 +12,7 @@ use crate::{
             DELETE_BATCH_SIZE, INDEX_GRANULARITY, MIN_AGE_TO_FORCE_MERGE_SECONDS,
         },
     },
+    errors,
 };
 
 /// Trait for converting source types to Clickhouse column representation
@@ -207,6 +208,9 @@ pub trait IntoClickhouse {
     /// constant `IN` list into a single literal, so the AST stays small. A long `OR` chain makes
     /// background mutation execution fail with `Query tree is too big` (max_expanded_ast_elements),
     /// and a failed mutation blocks every later mutation on the same parts.
+    ///
+    /// Returns an error when there are rows to delete but the target table has no primary key
+    /// columns, so the caller retries instead of silently dropping the deletes.
     fn generate_delete_queries<IntoClickhouseColumnType, IntoClickhouseRowType>(
         &self,
         clickhouse_config: &ClickHouseConfig,
@@ -214,7 +218,7 @@ pub trait IntoClickhouse {
         source_columns: &[IntoClickhouseColumnType],
         table_name: &str,
         rows: &[IntoClickhouseRowType],
-    ) -> Vec<String>
+    ) -> errors::Result<Vec<String>>
     where
         IntoClickhouseColumnType: IntoClickhouseColumn,
         IntoClickhouseRowType: IntoClickhouseRow,
@@ -224,8 +228,16 @@ pub trait IntoClickhouse {
             .filter(|col| col.is_in_primary_key)
             .collect();
 
-        if rows.is_empty() || primary_key_columns.is_empty() {
-            return vec![];
+        if rows.is_empty() {
+            return Ok(vec![]);
+        }
+
+        if primary_key_columns.is_empty() {
+            return Err(errors::Errors::PrimaryKeyNotFound(format!(
+                "{}.{table_name} has no primary key columns; cannot apply {} deletes",
+                clickhouse_config.connection.database,
+                rows.len()
+            )));
         }
 
         let key_expression = if primary_key_columns.len() == 1 {
@@ -270,7 +282,7 @@ pub trait IntoClickhouse {
             ));
         }
 
-        delete_queries
+        Ok(delete_queries)
     }
 }
 
@@ -293,6 +305,7 @@ mod tests {
     use crate::{
         adapter::postgres::{PostgresColumn, PostgresCopyRow, pgoutput::PgOutputValue},
         config::{ClickHouseConfig, ClickHouseConnectionConfig},
+        errors,
     };
 
     struct TestPipe;
@@ -355,13 +368,15 @@ mod tests {
         ];
         let rows = vec![row(&["1", "a"]), row(&["2", "b"]), row(&["3", "c"])];
 
-        let queries = TestPipe.generate_delete_queries(
-            &clickhouse_config(),
-            &clickhouse_columns,
-            &source_columns,
-            "users",
-            &rows,
-        );
+        let queries = TestPipe
+            .generate_delete_queries(
+                &clickhouse_config(),
+                &clickhouse_columns,
+                &source_columns,
+                "users",
+                &rows,
+            )
+            .unwrap();
 
         assert_eq!(
             queries,
@@ -375,13 +390,15 @@ mod tests {
         let clickhouse_columns = vec![clickhouse_column(1, "code", "String", true)];
         let rows = vec![row(&["a'b"]), row(&["c\\d"])];
 
-        let queries = TestPipe.generate_delete_queries(
-            &clickhouse_config(),
-            &clickhouse_columns,
-            &source_columns,
-            "codes",
-            &rows,
-        );
+        let queries = TestPipe
+            .generate_delete_queries(
+                &clickhouse_config(),
+                &clickhouse_columns,
+                &source_columns,
+                "codes",
+                &rows,
+            )
+            .unwrap();
 
         assert_eq!(
             queries,
@@ -403,13 +420,15 @@ mod tests {
         ];
         let rows = vec![row(&["1", "u1", "x"]), row(&["2", "u2", "y"])];
 
-        let queries = TestPipe.generate_delete_queries(
-            &clickhouse_config(),
-            &clickhouse_columns,
-            &source_columns,
-            "items",
-            &rows,
-        );
+        let queries = TestPipe
+            .generate_delete_queries(
+                &clickhouse_config(),
+                &clickhouse_columns,
+                &source_columns,
+                "items",
+                &rows,
+            )
+            .unwrap();
 
         assert_eq!(
             queries,
@@ -428,13 +447,15 @@ mod tests {
         let ids: Vec<String> = (0..total).map(|i| i.to_string()).collect();
         let rows: Vec<_> = ids.iter().map(|id| row(&[id.as_str()])).collect();
 
-        let queries = TestPipe.generate_delete_queries(
-            &clickhouse_config(),
-            &clickhouse_columns,
-            &source_columns,
-            "events",
-            &rows,
-        );
+        let queries = TestPipe
+            .generate_delete_queries(
+                &clickhouse_config(),
+                &clickhouse_columns,
+                &source_columns,
+                "events",
+                &rows,
+            )
+            .unwrap();
 
         assert_eq!(queries.len(), 3);
         let counts: Vec<usize> = queries
@@ -447,28 +468,42 @@ mod tests {
     }
 
     #[test]
-    fn delete_queries_empty_without_rows_or_primary_key() {
+    fn delete_queries_empty_without_rows() {
         let source_columns = vec![postgres_column(1, "id", "int8", false)];
-        let no_pk = vec![clickhouse_column(1, "id", "Int64", false)];
         let with_pk = vec![clickhouse_column(1, "id", "Int64", true)];
-        let rows = vec![row(&["1"])];
+        let no_pk = vec![clickhouse_column(1, "id", "Int64", false)];
         let no_rows: Vec<PostgresCopyRow> = vec![];
 
-        assert!(
-            TestPipe
-                .generate_delete_queries(&clickhouse_config(), &no_pk, &source_columns, "t", &rows)
-                .is_empty()
+        for columns in [&with_pk, &no_pk] {
+            assert!(
+                TestPipe
+                    .generate_delete_queries(
+                        &clickhouse_config(),
+                        columns,
+                        &source_columns,
+                        "t",
+                        &no_rows
+                    )
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn delete_queries_error_without_primary_key() {
+        let source_columns = vec![postgres_column(1, "id", "int8", false)];
+        let no_pk = vec![clickhouse_column(1, "id", "Int64", false)];
+        let rows = vec![row(&["1"])];
+
+        let result = TestPipe.generate_delete_queries(
+            &clickhouse_config(),
+            &no_pk,
+            &source_columns,
+            "t",
+            &rows,
         );
-        assert!(
-            TestPipe
-                .generate_delete_queries(
-                    &clickhouse_config(),
-                    &with_pk,
-                    &source_columns,
-                    "t",
-                    &no_rows
-                )
-                .is_empty()
-        );
+
+        assert!(matches!(result, Err(errors::Errors::PrimaryKeyNotFound(_))));
     }
 }

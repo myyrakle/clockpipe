@@ -478,13 +478,24 @@ impl IPipe for PostgresPipe {
 
             // 4. Delete rows in ClickHouse
             for (table_name, batch) in batch_delete_queue.iter() {
-                let delete_queries = self.generate_delete_queries(
+                let delete_queries = match self.generate_delete_queries(
                     &self.clickhouse_config,
                     &batch.table_info.clickhouse_columns,
                     &batch.table_info.postgres_columns,
                     table_name,
                     &batch.rows,
-                );
+                ) {
+                    Ok(delete_queries) => delete_queries,
+                    Err(error) => {
+                        log::error!("Failed to generate delete queries for {table_name}: {error}");
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            self.config.sleep_millis_when_write_failed,
+                        ))
+                        .await;
+
+                        continue 'SYNC_LOOP;
+                    }
+                };
 
                 for delete_query in delete_queries.iter() {
                     if let Err(error) = self.clickhouse_connection.execute_query(delete_query).await
