@@ -744,9 +744,11 @@ impl PostgresConnection {
             ON pgd.objsubid = c.ordinal_position
             AND
                 pgd.objoid = (
-                    SELECT oid
-                    FROM pg_catalog.pg_class
-                    WHERE relname = c.table_name
+                    SELECT pc.oid
+                    FROM pg_catalog.pg_class pc
+                    JOIN pg_catalog.pg_namespace pn ON pn.oid = pc.relnamespace
+                    WHERE pc.relname = c.table_name
+                        AND pn.nspname = c.table_schema
                 )
             WHERE c.table_name = $1 AND c.table_schema = $2
             ORDER BY c.ordinal_position ASC
